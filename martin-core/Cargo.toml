@@ -38,6 +38,7 @@ unstable-cog = [
     "dep:tiff",
     "dep:image",
     "dep:serde_json",
+    "dep:gdal",
     "_tiles",
 ]
 unstable-rendering = ["styles", "dep:maplibre_native", "dep:image"]
@@ -101,6 +102,7 @@ tokio = { workspace = true, optional = true }
 tokio-postgres-rustls = { workspace = true, optional = true }
 tracing.workspace = true
 xxhash-rust.workspace = true
+gdal = { workspace = true, optional = true }
 
 [dev-dependencies]
 actix-web.workspace = true

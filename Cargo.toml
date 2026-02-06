@@ -53,6 +53,7 @@ bytes = "1"
 clap = { version = "4", features = ["derive", "unstable-markdown", "wrap_help"] }
 criterion = { version = "0.8", features = ["async_futures", "async_tokio", "html_reports"] }
 dashmap = { version = "6.1.0", features = ["serde", "inline", "rayon"] }
+gdal = { version = "0.19.0" }
 deadpool-postgres = "0.14"
 enum-display = "0.2"
 env_logger = "0.11"

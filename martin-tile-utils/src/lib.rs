@@ -400,6 +400,32 @@ pub fn tile_index(lng: f64, lat: f64, zoom: u8) -> (u32, u32) {
     (col, row)
 }
 
+/// Returns a GDAL geotransform for a WebMercator XYZ tile (256×256)
+///
+/// Z = zoom level
+/// X = tile x
+/// Y = tile y (XYZ scheme, origin top-left)
+pub fn webmercator_tile_geotransform(coord: TileCoord, tile_size: f64) -> [f64; 6] {
+    const ORIGIN_SHIFT: f64 = 20037508.342789244;
+
+    let n = 2.0_f64.powi(coord.z as i32);
+    let tile_span = (ORIGIN_SHIFT * 2.0) / n;
+
+    let minx = -ORIGIN_SHIFT + (coord.x as f64) * tile_span;
+    let maxy =  ORIGIN_SHIFT - (coord.y as f64) * tile_span;
+
+    let pixel_size = tile_span / tile_size;
+
+    [
+        minx,          // top-left X
+        pixel_size,    // pixel width
+        0.0,           // rotation
+        maxy,          // top-left Y
+        0.0,           // rotation
+        -pixel_size,   // pixel height (negative!)
+    ]
+}
+
 /// Convert min/max XYZ tile coordinates to a bounding box values.
 ///
 /// The result is `[min_lng, min_lat, max_lng, max_lat]`

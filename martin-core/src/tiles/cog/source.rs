@@ -1,14 +1,19 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::File;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::vec;
 
 use async_trait::async_trait;
+use gdal::{Dataset, Driver, DriverManager};
+use gdal::raster::reproject;
+use gdal::spatial_ref::SpatialRef;
 use martin_tile_utils::{
-    EARTH_CIRCUMFERENCE, MAX_ZOOM, TileCoord, TileData, TileInfo, webmercator_to_wgs84,
+    EARTH_CIRCUMFERENCE, MAX_ZOOM, TileCoord, TileData, TileInfo, webmercator_tile_geotransform, webmercator_to_wgs84
 };
 use serde_json::Value;
+use tiff::ColorType;
 use tiff::decoder::{ChunkType, Decoder};
 use tiff::tags::Tag::{self};
 use tiff::tags::{CompressionMethod, PlanarConfiguration};
@@ -137,26 +142,26 @@ impl CogSource {
 
         let mut tilejson = tilejson! {
             tiles: vec![],
-            bounds: Bounds::new(
-                min.0,
-                min.1,
-                max.0,
-                max.1,
-            ),
-            center: Center{
-                longitude: center.0,
-                latitude: center.1,
-                zoom: u8::midpoint(max_zoom, min_zoom),
-            },
-            minzoom: min_zoom,
-            maxzoom: max_zoom,
+            // bounds: Bounds::new(
+            //     min.0,
+            //     min.1,
+            //     max.0,
+            //     max.1,
+            // ),
+            // center: Center{
+            //     longitude: center.0,
+            //     latitude: center.1,
+            //     zoom: u8::midpoint(max_zoom, min_zoom),
+            // },
+            // minzoom: min_zoom,
+            // maxzoom: max_zoom,
         };
         tilejson
             .other
-            .insert("tileSize".to_string(), Value::from(tile_size));
-        tilejson
-            .other
-            .insert("format".to_string(), Value::from(output_format.to_string()));
+            .insert("tileSize".to_string(), Value::from(512.0));
+        // tilejson
+        //     .other
+        //     .insert("format".to_string(), Value::from(output_format.to_string()));
 
         Ok(CogSource {
             id,
@@ -182,6 +187,43 @@ fn web_mercator_zoom(model_resolution: f64, tile_size: u32) -> Option<u8> {
     }
 
     None
+}
+
+
+/// Encodes RGBA pixel data to PNG format.
+fn encode_as_png(
+    tile_size: u32,
+    pixels: &[u8],
+    path: &Path,
+    color_type: ColorType,
+) -> Result<Vec<u8>, CogError> {
+    let mut result_file_buffer = Vec::new();
+    let png_color_type = match color_type {
+        ColorType::RGB(8) => Ok(png::ColorType::Rgb),
+        ColorType::RGBA(8) => Ok(png::ColorType::Rgba),
+        c => Err(CogError::NotSupportedColorTypeAndBitDepth(
+            c,
+            path.to_path_buf(),
+        )),
+    }?;
+
+    {
+        let mut encoder = png::Encoder::new(
+            BufWriter::new(&mut result_file_buffer),
+            tile_size,
+            tile_size,
+        );
+        encoder.set_color(png_color_type);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| CogError::WritePngHeaderFailed(path.to_path_buf(), e))?;
+        writer
+            .write_image_data(pixels)
+            .map_err(|e| CogError::WriteToPngFailed(path.to_path_buf(), e))?;
+    }
+
+    Ok(result_file_buffer)
 }
 
 #[async_trait]
@@ -216,19 +258,44 @@ impl Source for CogSource {
         xyz: TileCoord,
         _url_query: Option<&UrlQuery>,
     ) -> MartinCoreResult<TileData> {
-        if xyz.z < self.min_zoom || xyz.z > self.max_zoom {
-            return Ok(Vec::new());
+        {
+            let src = Dataset::open(&self.path).expect("failed to open file");
+            let d = DriverManager::get_driver_by_name("MEM").expect("failed to get MEM driver");
+            let mut dst = d.create(format!("/vsimem/{:?}-{}-{}-{}.tif", self.path, xyz.z, xyz.x, xyz.z), 512, 512, 4).expect("failed to create vsimem file");
+            let dst_srs = &SpatialRef::from_epsg(3857).expect("failed to get srs from epsg 3857");
+            dst.set_spatial_ref(&dst_srs).expect("failed to set spatial ref");
+            dst.set_geo_transform(&webmercator_tile_geotransform(xyz, 512.0)).expect("failed to set geo transform");
+            let _ = reproject(&src, &mut dst).expect("failed to reproject");
+            let (width, height) = dst.raster_size();
+            let mut rgba = vec![0u8; (width * height * 4) as usize];
+            for band_index in 1..=3 {
+                let band = dst.rasterband(band_index).expect("failed to read band");
+                let buf = band.read_band_as::<u8>().expect("failed to read data");
+                let src = buf.data();
+                let channel_offset = (band_index - 1) as usize;
+                for i in 0..(width * height) as usize {
+                    rgba[i * 4 + channel_offset] = src[i];
+                }
+            }
+            for i in 0..(width * height) as usize {
+                rgba[i * 4 + 3] = 255;
+            }
+            let png = encode_as_png(width as u32, &rgba, &self.path, ColorType::RGBA(8))?;
+            return Ok(png);
         }
-        let image = self.images.get(&(xyz.z)).ok_or_else(|| {
-            CogError::ZoomOutOfRange(xyz.z, self.path.clone(), self.min_zoom, self.max_zoom)
-        })?;
+        // if xyz.z < self.min_zoom || xyz.z > self.max_zoom {
+        //     return Ok(Vec::new());
+        // }
+        // let image = self.images.get(&(xyz.z)).ok_or_else(|| {
+        //     CogError::ZoomOutOfRange(xyz.z, self.path.clone(), self.min_zoom, self.max_zoom)
+        // })?;
 
-        let file = File::open(&self.path).map_err(|e| CogError::IoError(e, self.path.clone()))?;
-        let mut decoder = Decoder::new(file)
-            .map_err(|e| CogError::InvalidTiffFile(e, self.path.clone()))?
-            .with_limits(tiff::decoder::Limits::default());
-        let bytes = image.get_tile(&mut decoder, xyz, &self.path)?;
-        Ok(bytes)
+        // let file = File::open(&self.path).map_err(|e| CogError::IoError(e, self.path.clone()))?;
+        // let mut decoder = Decoder::new(file)
+        //     .map_err(|e| CogError::InvalidTiffFile(e, self.path.clone()))?
+        //     .with_limits(tiff::decoder::Limits::default());
+        // let bytes = image.get_tile(&mut decoder, xyz, &self.path)?;
+        // Ok(bytes)
     }
 }
 
@@ -335,12 +402,12 @@ fn verify_requirements(
             _ => Err(CogError::InvalidGeoInformation(path.to_path_buf(), "Either a valid transformation (tag 34264) or both pixel scale (tag 33550) and tie points (tag 33922) must be provided".to_string())),
     }?;
 
-    if model.projected_crs.is_none_or(|crs| crs != 3857u16) {
-        return Err(CogError::InvalidGeoInformation(
-            path.to_path_buf(),
-            "The projected coordinate reference system must be EPSG:3857".to_string(),
-        ));
-    }
+    // if model.projected_crs.is_none_or(|crs| crs != 3857u16) {
+    //     return Err(CogError::InvalidGeoInformation(
+    //         path.to_path_buf(),
+    //         "The projected coordinate reference system must be EPSG:3857".to_string(),
+    //     ));
+    // }
 
     Ok(())
 }
@@ -352,26 +419,26 @@ fn get_image(
     origin: [f64; 3],
     resolution: f64,
 ) -> Result<Image, CogError> {
-    let tile_size = decoder.chunk_dimensions().0;
-    let (image_width, image_length) = dimensions_in_pixel(decoder, path, ifd_index)?;
-    let zoom_level = web_mercator_zoom(resolution, tile_size)
-        .ok_or(CogError::GetOriginFailed(path.to_path_buf()))?;
-    let tiles_origin = get_tiles_origin(tile_size, resolution, [origin[0], origin[1]])
-        .ok_or(CogError::GetOriginFailed(path.to_path_buf()))?;
-    let tiles_across = image_width.div_ceil(tile_size);
-    let tiles_down = image_length.div_ceil(tile_size);
+    // let tile_size = decoder.chunk_dimensions().0;
+    // let (image_width, image_length) = dimensions_in_pixel(decoder, path, ifd_index)?;
+    // let zoom_level = web_mercator_zoom(resolution, tile_size)
+    //     .ok_or(CogError::GetOriginFailed(path.to_path_buf()))?;
+    // let tiles_origin = get_tiles_origin(tile_size, resolution, [origin[0], origin[1]])
+    //     .ok_or(CogError::GetOriginFailed(path.to_path_buf()))?;
+    // let tiles_across = image_width.div_ceil(tile_size);
+    // let tiles_down = image_length.div_ceil(tile_size);
 
-    // Get compression method for this IFD
-    let compression: u16 = decoder.get_tag_unsigned(Tag::Compression).unwrap_or(1); // Default to None (1) if not found
+    // // Get compression method for this IFD
+    // let compression: u16 = decoder.get_tag_unsigned(Tag::Compression).unwrap_or(1); // Default to None (1) if not found
 
     Ok(Image::new(
-        ifd_index,
-        zoom_level,
-        tiles_origin,
-        tiles_across,
-        tiles_down,
-        tile_size,
-        compression,
+        0,
+        1,
+        (1, 1),
+        1,
+        1,
+        1,
+        COMPRESSION_WEBP,
     ))
 }
 

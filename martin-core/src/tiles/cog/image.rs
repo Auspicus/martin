@@ -5,6 +5,10 @@ use std::path::Path;
 use martin_tile_utils::{Format, TileCoord, TileData};
 use tiff::ColorType;
 use tiff::decoder::Decoder;
+use gdal::{Dataset, DatasetOptions};
+use gdal::raster::reproject;
+use gdal::spatial_ref::SpatialRef;
+use martin_tile_utils::{Format, TileCoord, TileData, webmercator_tile_geotransform};
 use tiff::tags::CompressionMethod;
 
 use crate::tiles::cog::CogError;

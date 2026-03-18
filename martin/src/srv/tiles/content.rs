@@ -18,7 +18,7 @@ use tracing::warn;
 
 use crate::config::args::PreferredEncoding;
 use crate::config::file::srv::SrvConfig;
-use crate::source::TileSources;
+use crate::reload::TileSourceManager;
 use crate::srv::server::{DebouncedWarning, map_internal_error};
 use martin_tile_utils::{decode_zlib, decode_zstd, encode_zlib, encode_zstd};
 
@@ -43,7 +43,7 @@ async fn get_tile(
     req: HttpRequest,
     srv_config: Data<SrvConfig>,
     path: Path<TileRequest>,
-    sources: Data<TileSources>,
+    sources: Data<TileSourceManager>,
     cache: Data<OptTileCache>,
 ) -> ActixResult<HttpResponse> {
     let src = DynTileSource::new(
@@ -174,7 +174,7 @@ pub struct DynTileSource<'a> {
 impl<'a> DynTileSource<'a> {
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        sources: &'a TileSources,
+        sources: &'a TileSourceManager,
         source_ids: &str,
         zoom: Option<u8>,
         query: &'a str,
@@ -467,7 +467,10 @@ mod tests {
     use rstest::rstest;
     use tilejson::tilejson;
 
+    use martin_core::tiles::NO_TILE_CACHE;
+
     use super::*;
+    use crate::reload::TileSourceManager;
     use crate::srv::tiles::tests::{CompressedTestSource, TestSource};
 
     #[rstest]
@@ -486,18 +489,19 @@ mod tests {
         #[case] preferred_enc: Option<PreferredEncoding>,
         #[case] expected_enc: Encoding,
     ) {
-        let sources = TileSources::new(vec![vec![Box::new(TestSource {
+        let tsm = TileSourceManager::new(NO_TILE_CACHE);
+        tsm.upsert_source(Box::new(TestSource {
             id: "test_source",
             tj: tilejson! { tiles: vec![] },
             data: vec![1_u8, 2, 3],
-        })]]);
+        }));
 
         let accept_enc = Some(AcceptEncoding(
             accept_enc.iter().map(|s| s.parse().unwrap()).collect(),
         ));
 
         let src = DynTileSource::new(
-            &sources,
+            &tsm,
             "test_source",
             None,
             "",
@@ -524,15 +528,15 @@ mod tests {
         #[case] expected_etag: Option<EntityTag>,
     ) {
         let source_id = "source1";
-        let source1 = TestSource {
+        let tsm = TileSourceManager::new(NO_TILE_CACHE);
+        tsm.upsert_source(Box::new(TestSource {
             id: source_id,
             tj: tilejson! { tiles: vec![] },
             data: vec![1_u8, 2, 3],
-        };
-        let sources = TileSources::new(vec![vec![Box::new(source1)]]);
+        }));
 
         let src = DynTileSource::new(
-            &sources,
+            &tsm,
             source_id,
             None,
             "",
@@ -556,20 +560,17 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_tile_content() {
-        let non_empty_source = TestSource {
+        let tsm = TileSourceManager::new(NO_TILE_CACHE);
+        tsm.upsert_source(Box::new(TestSource {
             id: "non-empty",
             tj: tilejson! { tiles: vec![] },
             data: vec![1_u8, 2, 3],
-        };
-        let empty_source = TestSource {
+        }));
+        tsm.upsert_source(Box::new(TestSource {
             id: "empty",
             tj: tilejson! { tiles: vec![] },
             data: Vec::default(),
-        };
-        let sources = TileSources::new(vec![vec![
-            Box::new(non_empty_source),
-            Box::new(empty_source),
-        ]]);
+        }));
 
         for (source_id, expected) in &[
             ("non-empty", vec![1_u8, 2, 3]),
@@ -582,7 +583,7 @@ mod tests {
             ("empty,non-empty,empty", vec![1_u8, 2, 3]),
         ] {
             let src =
-                DynTileSource::new(&sources, source_id, None, "", None, None, None, None).unwrap();
+                DynTileSource::new(&tsm, source_id, None, "", None, None, None, None).unwrap();
             let xyz = TileCoord { z: 0, x: 0, y: 0 };
             assert_eq!(expected, &src.get_tile_content(xyz).await.unwrap().data);
         }
@@ -639,11 +640,13 @@ mod tests {
             encoding: src_enc,
         };
 
-        let sources = TileSources::new(vec![vec![Box::new(src1), Box::new(src2)]]);
+        let tsm = TileSourceManager::new(NO_TILE_CACHE);
+        tsm.upsert_source(Box::new(src1));
+        tsm.upsert_source(Box::new(src2));
 
         let accept_enc = accept.map(|s| AcceptEncoding(vec![s.parse().unwrap()]));
         let src = DynTileSource::new(
-            &sources,
+            &tsm,
             "src1,src2",
             None,
             "",

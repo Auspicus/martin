@@ -13,7 +13,7 @@ use tilejson::{TileJSON, tilejson};
 use url::form_urlencoded;
 
 use crate::config::file::srv::SrvConfig;
-use crate::source::TileSources;
+use crate::reload::TileSourceManager;
 
 #[derive(Deserialize)]
 pub struct SourceIDsRequest {
@@ -30,7 +30,7 @@ pub struct SourceIDsRequest {
 async fn get_source_info(
     req: HttpRequest,
     path: Path<SourceIDsRequest>,
-    sources: Data<TileSources>,
+    sources: Data<TileSourceManager>,
     srv_config: Data<SrvConfig>,
 ) -> ActixResult<HttpResponse> {
     let sources = sources.get_sources(&path.source_ids, None)?.0;

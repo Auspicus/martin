@@ -17,6 +17,8 @@ use crate::config::args::WebUiMode;
 #[cfg(feature = "_catalog")]
 use crate::config::file::ServerState;
 use crate::config::file::srv::{KEEP_ALIVE_DEFAULT, LISTEN_ADDRESSES_DEFAULT, SrvConfig};
+#[cfg(feature = "_tiles")]
+use crate::reload::TileSourceManager;
 use crate::srv::admin::Catalog;
 use crate::{MartinError, MartinResult};
 
@@ -185,6 +187,12 @@ pub fn new_server(
         &state,
     )?;
 
+    #[cfg(feature = "_tiles")]
+    let tsm = TileSourceManager::from_sources(
+        state.tiles.all_sources(),
+        state.tile_cache.clone(),
+    );
+
     let keep_alive = Duration::from_secs(config.keep_alive.unwrap_or(KEEP_ALIVE_DEFAULT));
     let worker_processes = config.worker_processes.unwrap_or_else(num_cpus::get);
     let listen_addresses = config
@@ -205,8 +213,8 @@ pub fn new_server(
 
         #[cfg(feature = "_tiles")]
         let app = app
-            .app_data(Data::new(state.tiles.clone()))
-            .app_data(Data::new(state.tile_cache.clone()));
+            .app_data(Data::new(state.tile_cache.clone()))
+            .app_data(Data::new(tsm.clone()));
 
         #[cfg(feature = "sprites")]
         let app = app

@@ -28,7 +28,12 @@ macro_rules! create_app {
                 .app_data(actix_web::web::Data::new(
                     ::martin_core::tiles::NO_TILE_CACHE,
                 ))
-                .app_data(actix_web::web::Data::new(state.tiles))
+                .app_data(actix_web::web::Data::new(
+                    ::martin::reload::TileSourceManager::from_sources(
+                        state.tiles.all_sources(),
+                        ::martin_core::tiles::NO_TILE_CACHE,
+                    ),
+                ))
                 .app_data(actix_web::web::Data::new(srv_config.clone()))
                 .wrap(actix_web::middleware::Condition::new(
                     cors_middleware.is_some(),

@@ -39,6 +39,12 @@ impl TileSources {
         self.0.iter().map(|v| v.key().clone()).collect()
     }
 
+    /// Returns clones of all sources currently in the registry.
+    #[must_use]
+    pub fn all_sources(&self) -> Vec<BoxedSource> {
+        self.0.iter().map(|v| v.clone_source()).collect()
+    }
+
     /// Gets a source by ID, returning 404 error if not found.
     pub fn get_source(&self, id: &str) -> actix_web::Result<BoxedSource> {
         Ok(self

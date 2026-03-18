@@ -9,6 +9,8 @@ mod source;
 #[cfg(feature = "_tiles")]
 pub use source::TileSources;
 
+pub mod reload;
+
 mod error;
 pub use error::{MartinError, MartinResult};
 

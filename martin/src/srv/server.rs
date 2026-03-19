@@ -17,6 +17,8 @@ use crate::config::args::WebUiMode;
 #[cfg(feature = "_catalog")]
 use crate::config::file::ServerState;
 use crate::config::file::srv::{KEEP_ALIVE_DEFAULT, LISTEN_ADDRESSES_DEFAULT, SrvConfig};
+#[cfg(feature = "mbtiles")]
+use crate::reload::MbtilesWatchPaths;
 #[cfg(feature = "_tiles")]
 use crate::reload::TileSourceManager;
 use crate::srv::admin::Catalog;
@@ -158,6 +160,7 @@ type Server = Pin<Box<dyn Future<Output = MartinResult<()>>>>;
 pub fn new_server(
     config: SrvConfig,
     #[cfg(feature = "_catalog")] state: ServerState,
+    #[cfg(feature = "mbtiles")] watch_paths: Option<MbtilesWatchPaths>,
 ) -> MartinResult<(Server, String)> {
     #[cfg(feature = "metrics")]
     let prometheus = {
@@ -192,6 +195,15 @@ pub fn new_server(
         state.tiles.all_sources(),
         state.tile_cache.clone(),
     );
+
+    #[cfg(feature = "mbtiles")]
+    if let Some(paths) = watch_paths {
+        let tsm_watch = tsm.clone();
+        tokio::spawn(crate::reload::watcher::MbtilesWatcher::start(
+            tsm_watch,
+            paths,
+        ));
+    }
 
     let keep_alive = Duration::from_secs(config.keep_alive.unwrap_or(KEEP_ALIVE_DEFAULT));
     let worker_processes = config.worker_processes.unwrap_or_else(num_cpus::get);

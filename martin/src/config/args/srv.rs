@@ -56,6 +56,10 @@ pub struct SrvArgs {
     /// Main cache size (in MB)
     #[arg(short = 'C', long)]
     pub cache_size: Option<u64>,
+    /// Watch tile source files for changes and reload automatically
+    #[arg(short = 'w', long)]
+    #[cfg(feature = "mbtiles")]
+    pub watch: bool,
 }
 
 #[cfg(all(feature = "webui", not(docsrs)))]
@@ -113,6 +117,10 @@ impl SrvArgs {
         #[cfg(feature = "_tiles")]
         if self.tilejson_url_version_param.is_some() {
             srv_config.tilejson_url_version_param = self.tilejson_url_version_param;
+        }
+        #[cfg(feature = "mbtiles")]
+        if self.watch {
+            srv_config.watch = Some(true);
         }
     }
 }

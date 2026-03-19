@@ -19,6 +19,7 @@ use martin::config::file::{Config, ServerState, read_config};
 use martin::config::primitives::env::OsEnv;
 use martin::logging::progress::TileCopyProgress;
 use martin::logging::{ensure_martin_core_log_level_matches, init_tracing};
+use martin::reload::TileSourceManager;
 use martin::srv::{DynTileSource, merge_tilejson};
 use martin::{MartinError, MartinResult};
 use martin_core::tiles::BoxedSource;
@@ -356,8 +357,9 @@ async fn run_tile_copy(args: CopyArgs, state: ServerState) -> MartinCpResult<()>
 
     let source_id = check_sources(&args, &state)?;
 
+    let tsm = TileSourceManager::from_sources(state.tiles.all_sources(), state.tile_cache.clone());
     let src = DynTileSource::new(
-        &state.tiles,
+        &tsm,
         &source_id,
         None,
         args.url_query.as_deref().unwrap_or_default(),
@@ -651,7 +653,8 @@ mod tests {
         #[case] ids: &str,
         #[case] expected: Vec<Bounds>,
     ) {
-        let dts = DynTileSource::new(&src, ids, None, "", None, None, None, None).unwrap();
+        let tsm = TileSourceManager::from_sources(src.all_sources(), martin_core::tiles::NO_TILE_CACHE);
+        let dts = DynTileSource::new(&tsm, ids, None, "", None, None, None, None).unwrap();
 
         assert_eq!(default_bounds(&dts), expected);
     }

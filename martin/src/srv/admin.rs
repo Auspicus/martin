@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::MartinResult;
 #[cfg(feature = "_catalog")]
 use crate::config::file::ServerState;
+#[cfg(feature = "_tiles")]
+use crate::reload::TileSourceManager;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Catalog {
@@ -39,8 +41,16 @@ impl Catalog {
     method = "HEAD",
     wrap = "middleware::Compress::default()"
 )]
-async fn get_catalog(catalog: Data<Catalog>) -> impl Responder {
-    HttpResponse::Ok().json(catalog)
+async fn get_catalog(
+    #[cfg(feature = "_tiles")] tsm: Option<Data<TileSourceManager>>,
+    catalog: Data<Catalog>,
+) -> impl Responder {
+    let mut live = (**catalog).clone();
+    #[cfg(feature = "_tiles")]
+    if let Some(tsm) = tsm {
+        live.tiles = tsm.get_catalog();
+    }
+    HttpResponse::Ok().json(live)
 }
 
 #[cfg(all(feature = "webui", not(docsrs)))]

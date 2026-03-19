@@ -17,6 +17,13 @@ pub const LISTEN_ADDRESSES_DEFAULT: &str = "0.0.0.0:3000";
 pub struct SrvConfig {
     pub keep_alive: Option<u64>,
     pub listen_addresses: Option<String>,
+    /// Watch tile source files for changes and reload them automatically.
+    ///
+    /// When `true`, Martin monitors registered `.mbtiles` files (and directories)
+    /// for modifications and deletions, updating the live source registry without
+    /// requiring a server restart.
+    #[cfg(feature = "mbtiles")]
+    pub watch: Option<bool>,
     /// The prefix under which we are served under
     pub route_prefix: Option<String>,
     /// The prefix under which we claim in the tileJSON to be served under

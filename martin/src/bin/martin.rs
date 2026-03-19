@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::env;
+use std::path::PathBuf;
 
 use clap::Parser as _;
 use martin::MartinResult;
@@ -6,6 +8,8 @@ use martin::config::args::Args;
 use martin::config::file::{Config, read_config};
 use martin::config::primitives::env::OsEnv;
 use martin::logging::{ensure_martin_core_log_level_matches, init_tracing};
+#[cfg(feature = "mbtiles")]
+use martin::reload::MbtilesWatchPaths;
 use martin::srv::new_server;
 use tracing::{error, info};
 
@@ -39,6 +43,9 @@ async fn start(args: Args) -> MartinResult<()> {
         info!("Use --save-config to save or print Martin configuration.");
     }
 
+    #[cfg(feature = "mbtiles")]
+    let watch_paths = extract_mbtiles_watch_paths(&config);
+
     #[cfg(all(feature = "webui", not(docsrs)))]
     let web_ui_mode = config.srv.web_ui.unwrap_or_default();
 
@@ -47,6 +54,8 @@ async fn start(args: Args) -> MartinResult<()> {
         config.srv,
         #[cfg(feature = "_catalog")]
         sources,
+        #[cfg(feature = "mbtiles")]
+        watch_paths,
     )?;
     let base_url = if let Some(ref prefix) = route_prefix {
         format!("http://{listen_addresses}{prefix}/")
@@ -66,6 +75,45 @@ async fn start(args: Args) -> MartinResult<()> {
     info!("Martin server is now active. See {base_url}catalog to see available services");
 
     server.await
+}
+
+/// Extract MBTiles watch configuration from the (post-resolve) config.
+///
+/// After `config.resolve()`, the `mbtiles` field has been mutated so that
+/// `sources` contains an `id → path` mapping for every registered source
+/// and `paths` contains the directories that were originally configured.
+#[cfg(feature = "mbtiles")]
+fn extract_mbtiles_watch_paths(config: &Config) -> Option<MbtilesWatchPaths> {
+    use martin::config::file::FileConfigEnum;
+
+    if !config.srv.watch.unwrap_or(false) {
+        return None;
+    }
+
+    let FileConfigEnum::Config(cfg) = &config.mbtiles else {
+        return None;
+    };
+
+    let id_to_path: HashMap<String, PathBuf> = cfg
+        .sources
+        .as_ref()
+        .map_or_else(HashMap::new, |sources| {
+            sources
+                .iter()
+                .map(|(id, src)| (id.clone(), src.get_path().clone()))
+                .collect()
+        });
+
+    let watched_dirs: Vec<PathBuf> = cfg.paths.iter().cloned().collect();
+
+    if id_to_path.is_empty() && watched_dirs.is_empty() {
+        return None;
+    }
+
+    Some(MbtilesWatchPaths {
+        id_to_path,
+        watched_dirs,
+    })
 }
 
 #[tokio::main]

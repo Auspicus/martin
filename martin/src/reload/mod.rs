@@ -28,6 +28,11 @@ use crate::srv::RESERVED_KEYWORDS;
 #[cfg(feature = "mbtiles")]
 pub mod mbtiles;
 
+#[cfg(feature = "mbtiles")]
+pub mod watcher;
+#[cfg(feature = "mbtiles")]
+pub use watcher::MbtilesWatchPaths;
+
 #[cfg(feature = "pmtiles")]
 pub mod pmtiles;
 

@@ -5,7 +5,7 @@
 //! - a deleted `.mbtiles` file removes the source from the TSM
 //! - a new `.mbtiles` file in a watched directory is loaded automatically
 
-#![cfg(feature = "mbtiles")]
+#![cfg(all(feature = "mbtiles", feature = "_file_watcher"))]
 
 use std::collections::HashMap;
 use std::path::PathBuf;

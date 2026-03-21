@@ -8,7 +8,7 @@ use martin::config::args::Args;
 use martin::config::file::{Config, read_config};
 use martin::config::primitives::env::OsEnv;
 use martin::logging::{ensure_martin_core_log_level_matches, init_tracing};
-#[cfg(feature = "mbtiles")]
+#[cfg(feature = "_file_watcher")]
 use martin::reload::WatchPaths;
 use martin::srv::new_server;
 use tracing::{error, info};
@@ -43,7 +43,7 @@ async fn start(args: Args) -> MartinResult<()> {
         info!("Use --save-config to save or print Martin configuration.");
     }
 
-    #[cfg(feature = "mbtiles")]
+    #[cfg(feature = "_file_watcher")]
     let watch_paths = extract_watch_paths(&config);
 
     #[cfg(all(feature = "webui", not(docsrs)))]
@@ -54,7 +54,7 @@ async fn start(args: Args) -> MartinResult<()> {
         config.srv,
         #[cfg(feature = "_catalog")]
         sources,
-        #[cfg(feature = "mbtiles")]
+        #[cfg(feature = "_file_watcher")]
         watch_paths,
     )?;
     let base_url = if let Some(ref prefix) = route_prefix {
@@ -79,10 +79,13 @@ async fn start(args: Args) -> MartinResult<()> {
 
 /// Extract watch configuration from the (post-resolve) config.
 ///
-/// After `config.resolve()`, the `mbtiles` field has been mutated so that
-/// `sources` contains an `id → path` mapping for every registered source
+/// After `config.resolve()`, each format's `FileConfig` has been mutated so
+/// that `sources` contains an `id → path` mapping for every registered source
 /// and `paths` contains the directories that were originally configured.
-#[cfg(feature = "mbtiles")]
+///
+/// PMTiles sources configured as remote URLs (s3://, gs://, az://, http://,
+/// https://) are silently skipped — only local file paths can be watched.
+#[cfg(feature = "_file_watcher")]
 fn extract_watch_paths(config: &Config) -> Option<WatchPaths> {
     use martin::config::file::FileConfigEnum;
 
@@ -90,21 +93,23 @@ fn extract_watch_paths(config: &Config) -> Option<WatchPaths> {
         return None;
     }
 
-    let FileConfigEnum::Config(cfg) = &config.mbtiles else {
-        return None;
-    };
+    let mut id_to_path: HashMap<String, PathBuf> = HashMap::new();
+    let mut watched_dirs: Vec<PathBuf> = Vec::new();
 
-    let id_to_path: HashMap<String, PathBuf> = cfg
-        .sources
-        .as_ref()
-        .map_or_else(HashMap::new, |sources| {
-            sources
-                .iter()
-                .map(|(id, src)| (id.clone(), src.get_path().clone()))
-                .collect()
-        });
+    #[cfg(feature = "mbtiles")]
+    if let FileConfigEnum::Config(cfg) = &config.mbtiles {
+        collect_local_sources(cfg, &mut id_to_path, &mut watched_dirs, |_| true);
+    }
 
-    let watched_dirs: Vec<PathBuf> = cfg.paths.iter().cloned().collect();
+    #[cfg(feature = "pmtiles")]
+    if let FileConfigEnum::Config(cfg) = &config.pmtiles {
+        collect_local_sources(cfg, &mut id_to_path, &mut watched_dirs, is_local_path);
+    }
+
+    #[cfg(feature = "unstable-cog")]
+    if let FileConfigEnum::Config(cfg) = &config.cog {
+        collect_local_sources(cfg, &mut id_to_path, &mut watched_dirs, |_| true);
+    }
 
     if id_to_path.is_empty() && watched_dirs.is_empty() {
         return None;
@@ -113,6 +118,45 @@ fn extract_watch_paths(config: &Config) -> Option<WatchPaths> {
     Some(WatchPaths {
         id_to_path,
         watched_dirs,
+    })
+}
+
+/// Collects source paths and watched directories from a [`FileConfig`] into
+/// the provided maps, filtering individual sources with `keep`.
+#[cfg(feature = "_file_watcher")]
+fn collect_local_sources<T>(
+    cfg: &martin::config::file::FileConfig<T>,
+    id_to_path: &mut HashMap<String, PathBuf>,
+    watched_dirs: &mut Vec<PathBuf>,
+    keep: impl Fn(&PathBuf) -> bool,
+) where
+    T: martin::config::file::ConfigurationLivecycleHooks,
+{
+    if let Some(sources) = &cfg.sources {
+        for (id, src) in sources {
+            let path = src.get_path();
+            if keep(path) {
+                id_to_path.insert(id.clone(), path.clone());
+            }
+        }
+    }
+    for path in cfg.paths.iter() {
+        if keep(path) {
+            watched_dirs.push(path.clone());
+        }
+    }
+}
+
+/// Returns `true` if `path` looks like a local filesystem path rather than a
+/// remote object-store URL.
+#[cfg(feature = "_file_watcher")]
+fn is_local_path(path: &PathBuf) -> bool {
+    !path.to_str().is_some_and(|s| {
+        s.starts_with("http://")
+            || s.starts_with("https://")
+            || s.starts_with("s3://")
+            || s.starts_with("gs://")
+            || s.starts_with("az://")
     })
 }
 

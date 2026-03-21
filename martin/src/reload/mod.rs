@@ -28,15 +28,15 @@ use crate::srv::RESERVED_KEYWORDS;
 #[cfg(feature = "mbtiles")]
 pub mod mbtiles;
 
-#[cfg(feature = "mbtiles")]
+#[cfg(feature = "_file_watcher")]
 pub mod watcher;
-#[cfg(feature = "mbtiles")]
+#[cfg(feature = "_file_watcher")]
 pub use watcher::WatchPaths;
 
-#[cfg(feature = "pmtiles")]
+#[cfg(all(feature = "pmtiles", feature = "_file_watcher"))]
 pub mod pmtiles;
 
-#[cfg(feature = "unstable-cog")]
+#[cfg(all(feature = "unstable-cog", feature = "_file_watcher"))]
 pub mod cog;
 
 #[cfg(feature = "postgres")]
@@ -46,7 +46,7 @@ pub mod postgres;
 ///
 /// A loader encapsulates format-specific knowledge (e.g. which file extension
 /// it handles) so the generic watcher stays free of any per-format details.
-#[cfg(feature = "mbtiles")]
+#[cfg(feature = "_file_watcher")]
 #[async_trait::async_trait]
 pub trait FileSourceLoader: Send + Sync {
     /// Returns `true` if this loader can handle the given file path.

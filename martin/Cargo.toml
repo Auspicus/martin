@@ -88,6 +88,7 @@ required-features = ["postgres"]
 
 [features]
 default = [
+    "_file_watcher",
     "fonts",
     "lambda",
     "mbtiles",
@@ -102,9 +103,10 @@ unstable-cog = ["martin-core/unstable-cog", "_tiles"]
 unstable-rendering = ["styles", "martin-core/unstable-rendering", "dep:image"]
 fonts = ["martin-core/fonts", "_catalog"]
 lambda = ["dep:lambda-web"]
-mbtiles = ["martin-core/mbtiles", "dep:mbtiles", "dep:notify", "_tiles"]
+mbtiles = ["martin-core/mbtiles", "dep:mbtiles", "_tiles"]
 metrics = ["dep:actix-web-prom"]
 pmtiles = ["martin-core/pmtiles", "dep:object_store", "_tiles"]
+_file_watcher = ["dep:notify"]
 postgres = [
     "martin-core/postgres",
     "dep:enum-display",

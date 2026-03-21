@@ -17,7 +17,7 @@ use crate::config::args::WebUiMode;
 #[cfg(feature = "_catalog")]
 use crate::config::file::ServerState;
 use crate::config::file::srv::{KEEP_ALIVE_DEFAULT, LISTEN_ADDRESSES_DEFAULT, SrvConfig};
-#[cfg(feature = "mbtiles")]
+#[cfg(feature = "_file_watcher")]
 use crate::reload::WatchPaths;
 #[cfg(feature = "_tiles")]
 use crate::reload::TileSourceManager;
@@ -160,7 +160,7 @@ type Server = Pin<Box<dyn Future<Output = MartinResult<()>>>>;
 pub fn new_server(
     config: SrvConfig,
     #[cfg(feature = "_catalog")] state: ServerState,
-    #[cfg(feature = "mbtiles")] watch_paths: Option<WatchPaths>,
+    #[cfg(feature = "_file_watcher")] watch_paths: Option<WatchPaths>,
 ) -> MartinResult<(Server, String)> {
     #[cfg(feature = "metrics")]
     let prometheus = {
@@ -196,13 +196,24 @@ pub fn new_server(
         state.tile_cache.clone(),
     );
 
-    #[cfg(feature = "mbtiles")]
+    #[cfg(feature = "_file_watcher")]
     if let Some(paths) = watch_paths {
         let tsm_watch = tsm.clone();
+        let mut loaders: Vec<std::sync::Arc<dyn crate::reload::FileSourceLoader>> = vec![];
+        #[cfg(feature = "mbtiles")]
+        loaders.push(std::sync::Arc::new(
+            crate::reload::mbtiles::MBTilesReloader,
+        ));
+        #[cfg(feature = "pmtiles")]
+        loaders.push(std::sync::Arc::new(
+            crate::reload::pmtiles::PMTilesReloader,
+        ));
+        #[cfg(feature = "unstable-cog")]
+        loaders.push(std::sync::Arc::new(crate::reload::cog::COGReloader));
         tokio::spawn(crate::reload::watcher::TileFileWatcher::start(
             tsm_watch,
             paths,
-            vec![std::sync::Arc::new(crate::reload::mbtiles::MBTilesReloader)],
+            loaders,
         ));
     }
 

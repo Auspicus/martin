@@ -5,16 +5,21 @@
 //! (or replace) a single source, or [`load_files`](MBTilesReloader::load_files)
 //! for a batch.
 
-use std::path::{Path, PathBuf};
+#[cfg(feature = "_file_watcher")]
+use std::path::Path;
+use std::path::PathBuf;
 
 use martin_core::tiles::mbtiles::MbtSource;
 
-use super::{FileSourceLoader, TileSourceManager};
+#[cfg(feature = "_file_watcher")]
+use super::FileSourceLoader;
+use super::TileSourceManager;
 use crate::MartinResult;
 
 /// Loads and reloads MBTiles tile sources into a [`TileSourceManager`].
 pub struct MBTilesReloader;
 
+#[cfg(feature = "_file_watcher")]
 #[async_trait::async_trait]
 impl FileSourceLoader for MBTilesReloader {
     fn can_handle(&self, path: &Path) -> bool {

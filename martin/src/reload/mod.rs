@@ -31,7 +31,7 @@ pub mod mbtiles;
 #[cfg(feature = "mbtiles")]
 pub mod watcher;
 #[cfg(feature = "mbtiles")]
-pub use watcher::MbtilesWatchPaths;
+pub use watcher::WatchPaths;
 
 #[cfg(feature = "pmtiles")]
 pub mod pmtiles;
@@ -41,6 +41,32 @@ pub mod cog;
 
 #[cfg(feature = "postgres")]
 pub mod postgres;
+
+/// Trait implemented by each file-based tile source format to plug into [`TileFileWatcher`](watcher::TileFileWatcher).
+///
+/// A loader encapsulates format-specific knowledge (e.g. which file extension
+/// it handles) so the generic watcher stays free of any per-format details.
+#[cfg(feature = "mbtiles")]
+#[async_trait::async_trait]
+pub trait FileSourceLoader: Send + Sync {
+    /// Returns `true` if this loader can handle the given file path.
+    fn can_handle(&self, path: &std::path::Path) -> bool;
+
+    /// Open the file at `path`, register it in `tsm`, and return the assigned source ID.
+    async fn load_file(
+        &self,
+        tsm: &TileSourceManager,
+        path: std::path::PathBuf,
+    ) -> crate::MartinResult<String>;
+
+    /// Re-open the file at `path` and replace the source registered under `id`.
+    async fn reload_source(
+        &self,
+        tsm: &TileSourceManager,
+        id: &str,
+        path: std::path::PathBuf,
+    ) -> crate::MartinResult<()>;
+}
 
 /// Central coordinator for live tile-source catalog updates.
 ///

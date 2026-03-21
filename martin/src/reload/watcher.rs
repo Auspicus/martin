@@ -1,8 +1,10 @@
-//! Filesystem watcher for MBTiles tile sources.
+//! Generic filesystem watcher for file-based tile sources.
 //!
-//! [`MbtilesWatcher::start`] spawns a background task that watches registered
-//! `.mbtiles` files and directories for changes, forwarding them to the
-//! [`TileSourceManager`].
+//! [`TileFileWatcher::start`] spawns a background task that watches registered
+//! tile files and directories for changes, forwarding them to the
+//! [`TileSourceManager`].  Format-specific knowledge lives in the
+//! [`FileSourceLoader`](super::FileSourceLoader) implementations passed to
+//! `start` — the watcher itself is format-agnostic.
 //!
 //! ## Implementation note: directory watching
 //!
@@ -14,6 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use notify::event::{AccessKind, AccessMode};
@@ -21,28 +24,36 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use super::TileSourceManager;
-use super::mbtiles::MBTilesReloader;
+use super::{FileSourceLoader, TileSourceManager};
 
-/// Paths needed to start the MBTiles filesystem watcher.
-pub struct MbtilesWatchPaths {
+/// Paths needed to start the tile filesystem watcher.
+pub struct WatchPaths {
     /// Existing sources: maps source ID → original file path.
     pub id_to_path: HashMap<String, PathBuf>,
-    /// Directories to watch for newly-created `.mbtiles` files.
+    /// Directories to watch for newly-created tile files.
     pub watched_dirs: Vec<PathBuf>,
 }
 
-/// Filesystem watcher for MBTiles tile sources.
-pub struct MbtilesWatcher;
+/// Generic filesystem watcher for file-based tile sources.
+pub struct TileFileWatcher;
 
-impl MbtilesWatcher {
+impl TileFileWatcher {
     /// Spawn a background task that reacts to filesystem events.
+    ///
+    /// `loaders` is a list of format-specific handlers; the watcher consults
+    /// them (via [`FileSourceLoader::can_handle`]) to decide whether to act on
+    /// a file and which loader to use.
     ///
     /// - **Modified file** → source is hot-reloaded in the TSM.
     /// - **Deleted file** → source is removed from the TSM.
-    /// - **New `.mbtiles` file** in a watched directory → source is loaded.
-    pub async fn start(tsm: TileSourceManager, paths: MbtilesWatchPaths) {
-        let MbtilesWatchPaths {
+    /// - **New file** in a watched directory → source is loaded if a loader
+    ///   reports it can handle the file.
+    pub async fn start(
+        tsm: TileSourceManager,
+        paths: WatchPaths,
+        loaders: Vec<Arc<dyn FileSourceLoader>>,
+    ) {
+        let WatchPaths {
             id_to_path,
             watched_dirs,
         } = paths;
@@ -104,8 +115,16 @@ impl MbtilesWatcher {
             while let Some(event) = rx.recv().await {
                 for path in &event.paths {
                     let canon = path.canonicalize().unwrap_or_else(|_| path.clone());
-                    handle_event(&event.kind, path, &canon, &tsm, &path_to_id, &watched_dirs)
-                        .await;
+                    handle_event(
+                        &event.kind,
+                        path,
+                        &canon,
+                        &tsm,
+                        &path_to_id,
+                        &watched_dirs,
+                        &loaders,
+                    )
+                    .await;
                 }
             }
         });
@@ -119,13 +138,16 @@ async fn handle_event(
     tsm: &TileSourceManager,
     path_to_id: &DashMap<PathBuf, String>,
     watched_dirs: &[PathBuf],
+    loaders: &[Arc<dyn FileSourceLoader>],
 ) {
     match kind {
         EventKind::Modify(_) => {
             if let Some(id) = path_to_id.get(canon).map(|r| r.clone()) {
-                info!("Reloading source `{id}` (file changed: {})", canon.display());
-                if let Err(e) = MBTilesReloader::reload_source(tsm, &id, path.clone()).await {
-                    warn!("Reload of `{id}` failed: {e}");
+                if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
+                    info!("Reloading source `{id}` (file changed: {})", canon.display());
+                    if let Err(e) = loader.reload_source(tsm, &id, path.clone()).await {
+                        warn!("Reload of `{id}` failed: {e}");
+                    }
                 }
             }
         }
@@ -139,28 +161,24 @@ async fn handle_event(
             }
         }
         EventKind::Create(_) => {
-            if !path.extension().is_some_and(|e| e == "mbtiles") {
-                return;
-            }
             // If the created path is a tracked file, reload it in place.
             if let Some(id) = path_to_id.get(canon).map(|r| r.clone()) {
-                info!(
-                    "Reloading source `{id}` (file replaced: {})",
-                    canon.display()
-                );
-                if let Err(e) = MBTilesReloader::reload_source(tsm, &id, path.clone()).await {
-                    warn!("Reload of `{id}` failed: {e}");
+                if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
+                    info!(
+                        "Reloading source `{id}` (file replaced: {})",
+                        canon.display()
+                    );
+                    if let Err(e) = loader.reload_source(tsm, &id, path.clone()).await {
+                        warn!("Reload of `{id}` failed: {e}");
+                    }
                 }
             }
-            // New .mbtiles files are loaded on Close(Write) once fully written.
+            // New files are loaded on Close(Write) once fully written.
         }
-        // Load new .mbtiles files after write is complete and file descriptor closed.
+        // Load new files after write is complete and file descriptor closed.
         // This fires after Create(File) once all data has been flushed, avoiding
-        // attempts to open a partially-written SQLite file.
+        // attempts to open a partially-written file.
         EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
-            if !path.extension().is_some_and(|e| e == "mbtiles") {
-                return;
-            }
             if path_to_id.contains_key(canon) {
                 return;
             }
@@ -168,13 +186,15 @@ async fn handle_event(
                 .iter()
                 .any(|dir| canon.parent().is_some_and(|p| p == dir));
             if in_watched {
-                info!("Loading new source from {}", path.display());
-                match MBTilesReloader::load_file(tsm, path.clone()).await {
-                    Ok(id) => {
-                        path_to_id.insert(canon.clone(), id);
-                    }
-                    Err(e) => {
-                        warn!("Failed to load {}: {e}", path.display());
+                if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
+                    info!("Loading new source from {}", path.display());
+                    match loader.load_file(tsm, path.clone()).await {
+                        Ok(id) => {
+                            path_to_id.insert(canon.clone(), id);
+                        }
+                        Err(e) => {
+                            warn!("Failed to load {}: {e}", path.display());
+                        }
                     }
                 }
             }

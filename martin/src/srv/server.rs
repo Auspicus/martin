@@ -18,7 +18,7 @@ use crate::config::args::WebUiMode;
 use crate::config::file::ServerState;
 use crate::config::file::srv::{KEEP_ALIVE_DEFAULT, LISTEN_ADDRESSES_DEFAULT, SrvConfig};
 #[cfg(feature = "mbtiles")]
-use crate::reload::MbtilesWatchPaths;
+use crate::reload::WatchPaths;
 #[cfg(feature = "_tiles")]
 use crate::reload::TileSourceManager;
 use crate::srv::admin::Catalog;
@@ -160,7 +160,7 @@ type Server = Pin<Box<dyn Future<Output = MartinResult<()>>>>;
 pub fn new_server(
     config: SrvConfig,
     #[cfg(feature = "_catalog")] state: ServerState,
-    #[cfg(feature = "mbtiles")] watch_paths: Option<MbtilesWatchPaths>,
+    #[cfg(feature = "mbtiles")] watch_paths: Option<WatchPaths>,
 ) -> MartinResult<(Server, String)> {
     #[cfg(feature = "metrics")]
     let prometheus = {
@@ -199,9 +199,10 @@ pub fn new_server(
     #[cfg(feature = "mbtiles")]
     if let Some(paths) = watch_paths {
         let tsm_watch = tsm.clone();
-        tokio::spawn(crate::reload::watcher::MbtilesWatcher::start(
+        tokio::spawn(crate::reload::watcher::TileFileWatcher::start(
             tsm_watch,
             paths,
+            vec![std::sync::Arc::new(crate::reload::mbtiles::MBTilesReloader)],
         ));
     }
 

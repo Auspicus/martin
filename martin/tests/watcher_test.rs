@@ -9,12 +9,13 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
-use martin::reload::MbtilesWatchPaths;
+use martin::reload::WatchPaths;
 use martin::reload::TileSourceManager;
 use martin::reload::mbtiles::MBTilesReloader;
-use martin::reload::watcher::MbtilesWatcher;
+use martin::reload::watcher::TileFileWatcher;
 use martin_core::tiles::NO_TILE_CACHE;
 use mbtiles::sqlx::{self, Connection as _};
 use mbtiles::Mbtiles;
@@ -69,12 +70,13 @@ async fn start_file_watcher(
 ) {
     let mut id_to_path = HashMap::new();
     id_to_path.insert(id.to_string(), path.clone());
-    MbtilesWatcher::start(
+    TileFileWatcher::start(
         tsm.clone(),
-        MbtilesWatchPaths {
+        WatchPaths {
             id_to_path,
             watched_dirs: vec![],
         },
+        vec![Arc::new(MBTilesReloader)],
     )
     .await;
 }
@@ -158,12 +160,13 @@ async fn watcher_loads_new_file_in_watched_directory() {
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
 
     // Start the watcher with an empty id_to_path but watching the directory.
-    MbtilesWatcher::start(
+    TileFileWatcher::start(
         tsm.clone(),
-        MbtilesWatchPaths {
+        WatchPaths {
             id_to_path: HashMap::new(),
             watched_dirs: vec![dir.path().to_path_buf()],
         },
+        vec![Arc::new(MBTilesReloader)],
     )
     .await;
     wait_for_watcher_init().await;

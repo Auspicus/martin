@@ -5,15 +5,35 @@
 //! (or replace) a single source, or [`load_files`](MBTilesReloader::load_files)
 //! for a batch.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use martin_core::tiles::mbtiles::MbtSource;
 
-use super::TileSourceManager;
+use super::{FileSourceLoader, TileSourceManager};
 use crate::MartinResult;
 
 /// Loads and reloads MBTiles tile sources into a [`TileSourceManager`].
 pub struct MBTilesReloader;
+
+#[async_trait::async_trait]
+impl FileSourceLoader for MBTilesReloader {
+    fn can_handle(&self, path: &Path) -> bool {
+        path.extension().is_some_and(|e| e == "mbtiles")
+    }
+
+    async fn load_file(&self, tsm: &TileSourceManager, path: PathBuf) -> MartinResult<String> {
+        Self::load_file(tsm, path).await
+    }
+
+    async fn reload_source(
+        &self,
+        tsm: &TileSourceManager,
+        id: &str,
+        path: PathBuf,
+    ) -> MartinResult<()> {
+        Self::reload_source(tsm, id, path).await
+    }
+}
 
 impl MBTilesReloader {
     /// Opens the MBTiles file at `path`, registers it with `tsm`, and returns

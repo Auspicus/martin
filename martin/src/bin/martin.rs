@@ -9,7 +9,7 @@ use martin::config::file::{Config, read_config};
 use martin::config::primitives::env::OsEnv;
 use martin::logging::{ensure_martin_core_log_level_matches, init_tracing};
 #[cfg(feature = "mbtiles")]
-use martin::reload::MbtilesWatchPaths;
+use martin::reload::WatchPaths;
 use martin::srv::new_server;
 use tracing::{error, info};
 
@@ -44,7 +44,7 @@ async fn start(args: Args) -> MartinResult<()> {
     }
 
     #[cfg(feature = "mbtiles")]
-    let watch_paths = extract_mbtiles_watch_paths(&config);
+    let watch_paths = extract_watch_paths(&config);
 
     #[cfg(all(feature = "webui", not(docsrs)))]
     let web_ui_mode = config.srv.web_ui.unwrap_or_default();
@@ -77,13 +77,13 @@ async fn start(args: Args) -> MartinResult<()> {
     server.await
 }
 
-/// Extract MBTiles watch configuration from the (post-resolve) config.
+/// Extract watch configuration from the (post-resolve) config.
 ///
 /// After `config.resolve()`, the `mbtiles` field has been mutated so that
 /// `sources` contains an `id → path` mapping for every registered source
 /// and `paths` contains the directories that were originally configured.
 #[cfg(feature = "mbtiles")]
-fn extract_mbtiles_watch_paths(config: &Config) -> Option<MbtilesWatchPaths> {
+fn extract_watch_paths(config: &Config) -> Option<WatchPaths> {
     use martin::config::file::FileConfigEnum;
 
     if !config.srv.watch.unwrap_or(false) {
@@ -110,7 +110,7 @@ fn extract_mbtiles_watch_paths(config: &Config) -> Option<MbtilesWatchPaths> {
         return None;
     }
 
-    Some(MbtilesWatchPaths {
+    Some(WatchPaths {
         id_to_path,
         watched_dirs,
     })

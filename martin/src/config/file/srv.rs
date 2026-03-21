@@ -19,10 +19,10 @@ pub struct SrvConfig {
     pub listen_addresses: Option<String>,
     /// Watch tile source files for changes and reload them automatically.
     ///
-    /// When `true`, Martin monitors registered `.mbtiles` files (and directories)
+    /// When `true`, Martin monitors registered connections, files and directories
     /// for modifications and deletions, updating the live source registry without
     /// requiring a server restart.
-    #[cfg(feature = "mbtiles")]
+    #[cfg(feature = "_file_watcher")]
     pub watch: Option<bool>,
     /// The prefix under which we are served under
     pub route_prefix: Option<String>,

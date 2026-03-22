@@ -19,7 +19,6 @@ use martin::config::file::{Config, ServerState, read_config};
 use martin::config::primitives::env::OsEnv;
 use martin::logging::progress::TileCopyProgress;
 use martin::logging::{ensure_martin_core_log_level_matches, init_tracing};
-use martin::reload::TileSourceManager;
 use martin::srv::{DynTileSource, merge_tilejson};
 use martin::{MartinError, MartinResult};
 use martin_core::tiles::BoxedSource;
@@ -298,7 +297,7 @@ fn check_sources(args: &CopyArgs, state: &ServerState) -> Result<String, MartinC
     if let Some(source_id) = &args.source {
         Ok(source_id.clone())
     } else {
-        let source_ids = state.tiles.source_names();
+        let source_ids = state.tsm.source_ids();
         if let Some(source_id) = source_ids.first() {
             if source_ids.len() > 1 {
                 return Err(MartinCpError::MultipleSources(source_ids.join(", ")));
@@ -349,7 +348,7 @@ async fn run_tile_copy(args: CopyArgs, state: ServerState) -> MartinCpResult<()>
     // we only warn that the concurrency might be too low if:
     // - a user has concurrency at the default
     // - there is at least one pg or remote pmtiles source
-    if concurrency == 1 && state.tiles.benefits_from_concurrent_scraping() {
+    if concurrency == 1 && state.tsm.benefits_from_concurrent_scraping() {
         warn!(
             "Using `--concurrency 1`. Increasing it may improve performance for your tile sources. See https://docs.martin.rs/cli/usage.html#concurrency for further details."
         );
@@ -553,8 +552,8 @@ mod tests {
 
     use async_trait::async_trait;
     use insta::assert_yaml_snapshot;
-    use martin::TileSources;
-    use martin_core::tiles::{MartinCoreResult, Source, UrlQuery};
+    use martin::reload::TileSourceManager;
+    use martin_core::tiles::{MartinCoreResult, NO_TILE_CACHE, Source, UrlQuery};
     use martin_tile_utils::{Encoding, Format};
     use rstest::{fixture, rstest};
     use tilejson::{TileJSON, tilejson};
@@ -596,8 +595,8 @@ mod tests {
     }
 
     #[fixture]
-    fn many_sources() -> TileSources {
-        TileSources::new(vec![vec![
+    fn many_sources() -> TileSourceManager {
+        TileSourceManager::from_sources(vec![
             Box::new(MockSource {
                 id: "test_source",
                 tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-110.0,20.0,-120.0,80.0").unwrap() },
@@ -618,25 +617,25 @@ mod tests {
                 tj: tilejson! { tiles: vec![] },
                 data: Vec::default(),
             }),
-        ]])
+        ], NO_TILE_CACHE)
     }
 
     #[fixture]
-    fn one_source() -> TileSources {
-        TileSources::new(vec![vec![Box::new(MockSource {
+    fn one_source() -> TileSourceManager {
+        TileSourceManager::from_sources(vec![Box::new(MockSource {
             id: "test_source",
             tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-120.0,30.0,-110.0,40.0").unwrap() },
             data: Vec::default(),
-        })]])
+        })], NO_TILE_CACHE)
     }
 
     #[fixture]
-    fn source_wo_bounds() -> TileSources {
-        TileSources::new(vec![vec![Box::new(MockSource {
+    fn source_wo_bounds() -> TileSourceManager {
+        TileSourceManager::from_sources(vec![Box::new(MockSource {
             id: "test_source",
             tj: tilejson! { tiles: vec![] },
             data: Vec::default(),
-        })]])
+        })], NO_TILE_CACHE)
     }
 
     #[rstest]
@@ -648,12 +647,11 @@ mod tests {
     #[case::many_sources_bounded_and_unbounded_rev(many_sources(), "unbounded_source,test_source", vec![Bounds::MAX_TILED, Bounds::from_str("-110.0,20.0,-120.0,80.0").unwrap()])]
     #[case::source_wo_bounds(source_wo_bounds(), "test_source", vec![Bounds::MAX_TILED])]
     fn test_default_bounds(
-        #[case] src: TileSources,
+        #[case] src: TileSourceManager,
         #[case] ids: &str,
         #[case] expected: Vec<Bounds>,
     ) {
-        let tsm = TileSourceManager::from_sources(src.all_sources(), martin_core::tiles::NO_TILE_CACHE);
-        let dts = DynTileSource::new(&tsm, ids, None, "", None, None, None, None).unwrap();
+        let dts = DynTileSource::new(&src, ids, None, "", None, None, None, None).unwrap();
 
         assert_eq!(default_bounds(&dts), expected);
     }

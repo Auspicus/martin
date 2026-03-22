@@ -93,9 +93,11 @@ async fn watcher_removes_source_on_file_deletion() {
     // Create a real file on disk and load it.
     create_mbtiles_file(&path, MVT_SQL).await;
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path.clone())
+    let advisory = MBTilesReloader::load_file(&tsm, path.clone())
         .await
         .expect("load_file");
+    let id = advisory.added_ids().into_iter().next().expect("added a source");
+    tsm.apply_advisory(advisory);
 
     // Sanity: source is present.
     assert!(tsm.get_source(&id).is_some(), "source should be present before deletion");
@@ -128,9 +130,11 @@ async fn watcher_reloads_source_on_file_modification() {
     // Create initial file.
     create_mbtiles_file(&path, MVT_SQL).await;
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path.clone())
+    let advisory = MBTilesReloader::load_file(&tsm, path.clone())
         .await
         .expect("load_file");
+    let id = advisory.added_ids().into_iter().next().expect("added a source");
+    tsm.apply_advisory(advisory);
 
     assert!(tsm.get_source(&id).is_some(), "source must exist before reload");
 

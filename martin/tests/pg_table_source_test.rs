@@ -10,7 +10,7 @@ pub use utils::*;
 async fn table_source() {
     let mock = mock_sources(mock_pgcfg("connection_string: $DATABASE_URL")).await;
     insta::with_settings!({sort_maps => true}, {
-    assert_yaml_snapshot!(mock.0.tiles.get_catalog(), @r#"
+    assert_yaml_snapshot!(mock.0.tsm.get_catalog(), @r#"
     "-function.withweired---_-characters":
       content_type: application/x-protobuf
       description: a function source with special characters
@@ -226,7 +226,7 @@ async fn table_source_schemas() {
           functions: false
     "});
     let sources = mock_sources(cfg).await.0;
-    assert_yaml_snapshot!(sources.tiles.get_catalog(), @r"
+    assert_yaml_snapshot!(sources.tsm.get_catalog(), @r"
     MixPoints:
       content_type: application/x-protobuf
       description: a description from comment on table

@@ -24,7 +24,7 @@ impl Catalog {
     pub fn new(#[cfg(feature = "_catalog")] state: &ServerState) -> MartinResult<Self> {
         Ok(Self {
             #[cfg(feature = "_tiles")]
-            tiles: state.tiles.get_catalog(),
+            tiles: state.tsm.get_catalog(),
             #[cfg(feature = "sprites")]
             sprites: state.sprites.get_catalog()?,
             #[cfg(feature = "fonts")]

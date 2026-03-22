@@ -1,8 +1,8 @@
 use criterion::async_executor::FuturesExecutor;
 use criterion::{Criterion, criterion_group, criterion_main};
-#[cfg(feature = "_tiles")]
-use martin::TileSources;
+use martin::reload::TileSourceManager;
 use martin::srv::DynTileSource;
+use martin_core::tiles::NO_TILE_CACHE;
 use martin_tile_utils::TileCoord;
 
 mod sources {
@@ -110,7 +110,7 @@ mod sources {
     }
 }
 
-async fn process_null_tile(sources: &TileSources) {
+async fn process_null_tile(sources: &TileSourceManager) {
     let src = DynTileSource::new(sources, "null", Some(0), "", None, None, None, None)
         .expect("null source can be created");
     src.get_http_response(TileCoord { z: 0, x: 0, y: 0 })
@@ -118,7 +118,7 @@ async fn process_null_tile(sources: &TileSources) {
         .expect("null source returns empty tile");
 }
 
-async fn process_error_tile(sources: &TileSources) {
+async fn process_error_tile(sources: &TileSourceManager) {
     let src = DynTileSource::new(sources, "error", Some(0), "", None, None, None, None)
         .expect("error source can be created");
     src.get_http_response(TileCoord { z: 0, x: 0, y: 0 })
@@ -127,7 +127,7 @@ async fn process_error_tile(sources: &TileSources) {
 }
 
 fn bench_null_source(c: &mut Criterion) {
-    let sources = TileSources::new(vec![vec![Box::new(sources::NullSource::new())]]);
+    let sources = TileSourceManager::from_sources(vec![Box::new(sources::NullSource::new())], NO_TILE_CACHE);
     c.bench_function("get_table_source_tile", |b| {
         b.to_async(FuturesExecutor)
             .iter(|| process_null_tile(&sources));
@@ -141,7 +141,7 @@ criterion_group! {
 }
 
 fn bench_error_source(c: &mut Criterion) {
-    let sources = TileSources::new(vec![vec![Box::new(sources::ErrorSource::new())]]);
+    let sources = TileSourceManager::from_sources(vec![Box::new(sources::ErrorSource::new())], NO_TILE_CACHE);
     c.bench_function("get_table_source_error", |b| {
         b.to_async(FuturesExecutor)
             .iter(|| process_error_tile(&sources));

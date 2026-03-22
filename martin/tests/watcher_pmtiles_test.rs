@@ -63,9 +63,11 @@ async fn pmtiles_watcher_removes_source_on_file_deletion() {
     std::fs::copy(pmtiles_fixture(), &path).expect("copy fixture");
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = PMTilesReloader::load_file(&tsm, path.clone())
+    let advisory = PMTilesReloader::load_file(&tsm, path.clone())
         .await
         .expect("load_file");
+    let id = advisory.added_ids().into_iter().next().expect("added a source");
+    tsm.apply_advisory(advisory);
 
     assert!(
         tsm.get_source(&id).is_some(),
@@ -96,9 +98,11 @@ async fn pmtiles_watcher_reloads_source_on_file_modification() {
     std::fs::copy(pmtiles_fixture(), &path).expect("copy fixture");
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = PMTilesReloader::load_file(&tsm, path.clone())
+    let advisory = PMTilesReloader::load_file(&tsm, path.clone())
         .await
         .expect("load_file");
+    let id = advisory.added_ids().into_iter().next().expect("added a source");
+    tsm.apply_advisory(advisory);
 
     assert!(tsm.get_source(&id).is_some(), "source must exist before reload");
 

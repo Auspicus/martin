@@ -15,6 +15,20 @@ const PNG_SCRIPT: &str = include_str!("../../tests/fixtures/mbtiles/geography-cl
 const MVT_MODIFIED_SCRIPT: &str =
     include_str!("../../tests/fixtures/mbtiles/world_cities_modified.sql");
 
+/// Load a file, apply the advisory, and return the assigned source ID.
+async fn load_file(tsm: &TileSourceManager, path: std::path::PathBuf) -> String {
+    let advisory = MBTilesReloader::load_file(tsm, path)
+        .await
+        .expect("load_file should succeed");
+    let id = advisory
+        .added_ids()
+        .into_iter()
+        .next()
+        .expect("advisory should have added a source");
+    tsm.apply_advisory(advisory);
+    id
+}
+
 // ---------------------------------------------------------------------------
 // Loading sources
 // ---------------------------------------------------------------------------
@@ -25,9 +39,7 @@ async fn load_single_source_is_accessible() {
         temp_named_mbtiles("tsm_single", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path)
-        .await
-        .expect("load_file should succeed");
+    let id = load_file(&tsm, path).await;
 
     assert!(!id.is_empty(), "assigned ID should not be empty");
     let source = tsm.get_source(&id).expect("source should be findable by its ID");
@@ -63,8 +75,8 @@ async fn source_ids_reflects_all_loaded_sources() {
         temp_named_mbtiles("tsm_ids_2", PNG_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id1 = MBTilesReloader::load_file(&tsm, path1).await.unwrap();
-    let id2 = MBTilesReloader::load_file(&tsm, path2).await.unwrap();
+    let id1 = load_file(&tsm, path1).await;
+    let id2 = load_file(&tsm, path2).await;
 
     let mut ids = tsm.source_ids();
     ids.sort();
@@ -83,7 +95,7 @@ async fn catalog_contains_all_loaded_sources() {
         temp_named_mbtiles("tsm_catalog", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path).await.unwrap();
+    let id = load_file(&tsm, path).await;
 
     let catalog = tsm.get_catalog();
     assert!(catalog.contains_key(&id), "catalog should contain the loaded source");
@@ -95,7 +107,7 @@ async fn catalog_entry_has_correct_content_type_for_mvt() {
         temp_named_mbtiles("tsm_catalog_mvt", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path).await.unwrap();
+    let id = load_file(&tsm, path).await;
 
     let catalog = tsm.get_catalog();
     let entry = catalog.get(&id).expect("entry should exist");
@@ -116,7 +128,7 @@ async fn remove_source_makes_it_inaccessible() {
         temp_named_mbtiles("tsm_remove", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path).await.unwrap();
+    let id = load_file(&tsm, path).await;
 
     assert!(tsm.get_source(&id).is_some(), "source should exist before removal");
     let removed = tsm.remove_source(&id);
@@ -144,15 +156,16 @@ async fn reload_source_replaces_existing() {
         temp_named_mbtiles("tsm_reload_v1", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path1).await.unwrap();
+    let id = load_file(&tsm, path1).await;
 
     // "Reload" using a modified version of the same data (different in-memory db).
     let (_mbt2, _conn2, path2) =
         temp_named_mbtiles("tsm_reload_v2", MVT_MODIFIED_SCRIPT).await;
 
-    MBTilesReloader::reload_source(&tsm, &id, path2)
+    let advisory = MBTilesReloader::reload_source(&tsm, &id, path2)
         .await
         .expect("reload_source should succeed");
+    tsm.apply_advisory(advisory);
 
     // The source should still be accessible under the same ID.
     let source = tsm.get_source(&id).expect("source should still exist after reload");
@@ -169,7 +182,7 @@ async fn retrieve_tile_through_tsm() {
         temp_named_mbtiles("tsm_tile_retrieval", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path).await.unwrap();
+    let id = load_file(&tsm, path).await;
 
     let source = tsm.get_source(&id).unwrap();
     let tile = source
@@ -194,8 +207,8 @@ async fn same_stem_files_get_unique_ids() {
         temp_named_mbtiles("tsm_dedup_b", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id1 = MBTilesReloader::load_file(&tsm, path1).await.unwrap();
-    let id2 = MBTilesReloader::load_file(&tsm, path2).await.unwrap();
+    let id1 = load_file(&tsm, path1).await;
+    let id2 = load_file(&tsm, path2).await;
 
     // The paths are different in-memory URIs, so the resolver must give them
     // distinct IDs.
@@ -212,7 +225,7 @@ async fn get_source_actix_returns_source() {
         temp_named_mbtiles("tsm_actix_get", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path).await.unwrap();
+    let id = load_file(&tsm, path).await;
 
     let src = tsm
         .get_source_actix(&id)
@@ -233,7 +246,7 @@ async fn get_sources_resolves_single_source() {
         temp_named_mbtiles("tsm_get_sources", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = MBTilesReloader::load_file(&tsm, path).await.unwrap();
+    let id = load_file(&tsm, path).await;
 
     let (sources, _, _) = tsm
         .get_sources(&id, None)

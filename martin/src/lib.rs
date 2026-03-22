@@ -4,11 +4,6 @@
 pub mod config;
 pub mod logging;
 
-#[cfg(feature = "_tiles")]
-mod source;
-#[cfg(feature = "_tiles")]
-pub use source::TileSources;
-
 pub mod reload;
 
 mod error;

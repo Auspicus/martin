@@ -143,7 +143,17 @@ async fn handle_event(
     match kind {
         EventKind::Modify(_) => {
             if let Some(id) = path_to_id.get(canon).map(|r| r.clone()) {
-                if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
+                if !path.exists() {
+                    // File was deleted; some kernels/filesystems emit Modify
+                    // before (or instead of) Remove — treat it as a removal.
+                    path_to_id.remove(canon);
+                    info!("Removing source `{id}` (file deleted: {})", path.display());
+                    tsm.apply_advisory(ReloadAdvisory {
+                        added: vec![],
+                        changed: vec![],
+                        removed: vec![id],
+                    });
+                } else if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
                     info!("Reloading source `{id}` (file changed: {})", canon.display());
                     match loader.reload_source(tsm, &id, path.clone()).await {
                         Ok(advisory) => tsm.apply_advisory(advisory),
@@ -153,10 +163,16 @@ async fn handle_event(
             }
         }
         EventKind::Remove(_) => {
-            if let Some((_, id)) = path_to_id.remove(canon) {
+            // When the file is already gone, canonicalize() falls back to the
+            // raw path, which may not match the canonicalized key stored at
+            // setup time.  Try both forms so the entry is always cleaned up.
+            let removed = path_to_id
+                .remove(canon)
+                .or_else(|| if canon != path { path_to_id.remove(path) } else { None });
+            if let Some((_, id)) = removed {
                 info!(
                     "Removing source `{id}` (file deleted: {})",
-                    canon.display()
+                    path.display()
                 );
                 tsm.apply_advisory(ReloadAdvisory {
                     added: vec![],

@@ -90,7 +90,7 @@ impl MBTilesReloader {
     /// returned by a previous [`load_file`](Self::load_file) call so the same
     /// URL remains valid after the reload.
     pub async fn reload_source(
-        tsm: &TileSourceManager,
+        _tsm: &TileSourceManager,
         id: &str,
         path: PathBuf,
     ) -> MartinResult<ReloadAdvisory> {

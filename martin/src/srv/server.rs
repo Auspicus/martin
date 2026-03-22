@@ -19,8 +19,6 @@ use crate::config::file::ServerState;
 use crate::config::file::srv::{KEEP_ALIVE_DEFAULT, LISTEN_ADDRESSES_DEFAULT, SrvConfig};
 #[cfg(feature = "_file_watcher")]
 use crate::reload::WatchPaths;
-#[cfg(feature = "_tiles")]
-use crate::reload::TileSourceManager;
 use crate::srv::admin::Catalog;
 use crate::{MartinError, MartinResult};
 
@@ -190,15 +188,9 @@ pub fn new_server(
         &state,
     )?;
 
-    #[cfg(feature = "_tiles")]
-    let tsm = TileSourceManager::from_sources(
-        state.tiles.all_sources(),
-        state.tile_cache.clone(),
-    );
-
     #[cfg(feature = "_file_watcher")]
     if let Some(paths) = watch_paths {
-        let tsm_watch = tsm.clone();
+        let tsm_watch = state.tsm.clone();
         let mut loaders: Vec<std::sync::Arc<dyn crate::reload::FileSourceLoader>> = vec![];
         #[cfg(feature = "mbtiles")]
         loaders.push(std::sync::Arc::new(
@@ -236,9 +228,7 @@ pub fn new_server(
             .app_data(Data::new(config.clone()));
 
         #[cfg(feature = "_tiles")]
-        let app = app
-            .app_data(Data::new(state.tile_cache.clone()))
-            .app_data(Data::new(tsm.clone()));
+        let app = app.app_data(Data::new(state.tsm.clone()));
 
         #[cfg(feature = "sprites")]
         let app = app

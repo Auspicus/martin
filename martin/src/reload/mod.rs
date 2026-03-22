@@ -18,7 +18,7 @@ use std::sync::Arc;
 use actix_web::error::ErrorNotFound;
 use dashmap::DashMap;
 use martin_core::tiles::catalog::TileCatalog;
-use martin_core::tiles::{BoxedSource, OptTileCache};
+use martin_core::tiles::{BoxedSource, OptTileCache, TileCache};
 use martin_tile_utils::TileInfo;
 use tracing::debug;
 
@@ -92,6 +92,12 @@ impl TileSourceManager {
             cache,
             id_resolver: IdResolver::new(RESERVED_KEYWORDS),
         }
+    }
+
+    /// Returns a reference to the tile cache, if one is configured.
+    #[must_use]
+    pub fn cache(&self) -> Option<&TileCache> {
+        self.cache.as_ref()
     }
 
     /// Creates a `TileSourceManager` pre-populated from an existing source collection.

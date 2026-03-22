@@ -8,7 +8,7 @@ use actix_web::http::header::{
 use actix_web::web::{Data, Path, Query};
 use actix_web::{HttpMessage as _, HttpRequest, HttpResponse, Result as ActixResult, route};
 use futures::future::try_join_all;
-use martin_core::tiles::{BoxedSource, OptTileCache, Tile, TileCache, UrlQuery};
+use martin_core::tiles::{BoxedSource, Tile, TileCache, UrlQuery};
 use martin_tile_utils::{
     Encoding, Format, TileCoord, TileData, TileInfo, decode_brotli, decode_gzip, encode_brotli,
     encode_gzip,
@@ -44,7 +44,6 @@ async fn get_tile(
     srv_config: Data<SrvConfig>,
     path: Path<TileRequest>,
     sources: Data<TileSourceManager>,
-    cache: Data<OptTileCache>,
 ) -> ActixResult<HttpResponse> {
     let src = DynTileSource::new(
         sources.as_ref(),
@@ -54,7 +53,7 @@ async fn get_tile(
         req.get_header::<AcceptEncoding>(),
         req.get_header::<IfNoneMatch>(),
         srv_config.preferred_encoding,
-        cache.as_ref().as_ref(),
+        sources.cache(),
     )?;
 
     src.get_http_response(TileCoord {

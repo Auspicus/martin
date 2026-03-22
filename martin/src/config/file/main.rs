@@ -8,7 +8,7 @@ use clap::ValueEnum;
 #[cfg(feature = "_tiles")]
 use futures::future::{BoxFuture, try_join_all};
 #[cfg(feature = "_tiles")]
-use martin_core::tiles::OptTileCache;
+use crate::reload::TileSourceManager;
 #[cfg(feature = "pmtiles")]
 use martin_core::tiles::pmtiles::PmtCache;
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,7 @@ pub struct ServerState {
     #[cfg(feature = "_tiles")]
     pub tiles: TileSources,
     #[cfg(feature = "_tiles")]
-    pub tile_cache: OptTileCache,
+    pub tsm: TileSourceManager,
 
     #[cfg(feature = "sprites")]
     pub sprites: martin_core::sprites::SpriteSources,
@@ -258,9 +258,9 @@ impl Config {
 
         Ok(ServerState {
             #[cfg(feature = "_tiles")]
-            tiles,
+            tsm: TileSourceManager::from_sources(tiles.all_sources(), cache_config.create_tile_cache()),
             #[cfg(feature = "_tiles")]
-            tile_cache: cache_config.create_tile_cache(),
+            tiles,
 
             #[cfg(feature = "sprites")]
             sprites: self.sprites.resolve()?,

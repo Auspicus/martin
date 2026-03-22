@@ -357,9 +357,8 @@ async fn run_tile_copy(args: CopyArgs, state: ServerState) -> MartinCpResult<()>
 
     let source_id = check_sources(&args, &state)?;
 
-    let tsm = TileSourceManager::from_sources(state.tiles.all_sources(), state.tile_cache.clone());
     let src = DynTileSource::new(
-        &tsm,
+        &state.tsm,
         &source_id,
         None,
         args.url_query.as_deref().unwrap_or_default(),

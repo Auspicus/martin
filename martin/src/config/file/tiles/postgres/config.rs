@@ -62,6 +62,19 @@ pub struct PostgresConfig {
     pub max_feature_count: Option<usize>,
     /// Maximum Postgres connections pool size [DEFAULT: 20]
     pub pool_size: Option<usize>,
+    /// Polling interval in seconds for live source reload.
+    ///
+    /// When set, Martin periodically re-discovers tables and functions from
+    /// this connection and updates the tile catalog accordingly:
+    /// - Newly added tables or functions appear as new sources.
+    /// - Dropped tables or functions are removed from the catalog.
+    /// - Sources whose `TileJSON` metadata changed (e.g. updated bounds) are
+    ///   refreshed and their cached tiles are invalidated.
+    ///
+    /// Data-only changes (row inserts/updates/deletes) are **not** detected
+    /// automatically; use a short interval or disable tile caching if you need
+    /// near-real-time data freshness.
+    pub watch_interval_secs: Option<u64>,
     /// Enable/disable/configure automatic discovery of tables and functions.
     ///
     /// You may set this to `OptBoolObj::Bool(false)` to disable.
@@ -315,6 +328,26 @@ mod tests {
                 postgres: One(PostgresConfig {
                     connection_string: Some("postgresql://postgres@localhost/db".to_string()),
                     auto_publish: OptBoolObj::Bool(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+    }
+
+    #[test]
+    fn parse_pg_watch_interval() {
+        assert_config(
+            indoc! {"
+            postgres:
+              connection_string: 'postgresql://postgres@localhost/db'
+              watch_interval_secs: 30
+        "},
+            &Config {
+                postgres: One(PostgresConfig {
+                    connection_string: Some("postgresql://postgres@localhost/db".to_string()),
+                    auto_publish: OptBoolObj::Bool(true),
+                    watch_interval_secs: Some(30),
                     ..Default::default()
                 }),
                 ..Default::default()

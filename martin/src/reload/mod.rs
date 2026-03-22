@@ -7,11 +7,15 @@
 //!
 //! ```text
 //! Main Process
-//! ├── PostgresReloader  ──┐
-//! ├── MBTilesReloader   ──┤──► TileSourceManager ──► Public Catalog
-//! ├── PMTilesReloader   ──┤
-//! └── COGReloader       ──┘
+//! ├── PostgresPoller  ──(poll)──┐
+//! ├── MBTilesReloader   ────────┤──► TileSourceManager ──► Public Catalog
+//! ├── PMTilesReloader   ────────┤
+//! └── COGReloader       ────────┘
 //! ```
+//!
+//! File-based sources use OS-level filesystem watchers for instant change
+//! detection.  The [`PostgresPoller`] uses configurable-interval polling
+//! because there is no OS-level hook for database schema changes.
 
 use std::sync::Arc;
 
@@ -41,6 +45,8 @@ pub mod cog;
 
 #[cfg(feature = "postgres")]
 pub mod postgres;
+#[cfg(feature = "postgres")]
+pub use postgres::{PostgresPollSetup, PostgresPoller};
 
 /// A declaration of one or more tile-source changes observed by a [`TileSourceWatcher`].
 ///

@@ -238,6 +238,25 @@ impl Config {
         #[cfg(feature = "pmtiles")]
         let pmtiles_cache = cache_config.create_pmtiles_cache();
 
+        // Capture pre-resolve clones of postgres configs that have polling
+        // enabled.  These clones preserve `tables: None` / `functions: None`
+        // (i.e. full auto-discovery) for subsequent poll cycles, and share
+        // the same IdResolver so source IDs remain stable across polls.
+        #[cfg(feature = "postgres")]
+        let pg_poll_setups: Vec<crate::reload::postgres::PostgresPollSetup> = self
+            .postgres
+            .iter()
+            .filter_map(|pg| {
+                pg.watch_interval_secs.map(|secs| {
+                    crate::reload::postgres::PostgresPollSetup {
+                        config: pg.clone(),
+                        idr: resolver.clone(),
+                        interval: std::time::Duration::from_secs(secs),
+                    }
+                })
+            })
+            .collect();
+
         #[cfg(feature = "_tiles")]
         let (sources, warnings) = self
             .resolve_tile_sources(
@@ -252,9 +271,18 @@ impl Config {
             .unwrap_or_default()
             .handle_tile_warnings(&warnings)?;
 
+        #[cfg(feature = "_tiles")]
+        let tsm = TileSourceManager::from_sources(sources, cache_config.create_tile_cache());
+
+        // Start background poll tasks now that the TSM is ready.
+        #[cfg(feature = "postgres")]
+        for setup in pg_poll_setups {
+            crate::reload::postgres::PostgresPoller::start(tsm.clone(), setup);
+        }
+
         Ok(ServerState {
             #[cfg(feature = "_tiles")]
-            tsm: TileSourceManager::from_sources(sources, cache_config.create_tile_cache()),
+            tsm,
 
             #[cfg(feature = "sprites")]
             sprites: self.sprites.resolve()?,

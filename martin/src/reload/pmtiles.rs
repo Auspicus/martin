@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use martin_core::tiles::pmtiles::{PmtCache, PmtCacheInstance, PmtilesSource};
 use url::Url;
 
-use super::{FileSourceLoader, TileSourceManager};
+use super::{ReloadAdvisory, TileSourceManager, TileSourceWatcher};
 use crate::MartinResult;
 use crate::config::file::ConfigFileError;
 
@@ -31,12 +31,12 @@ pub struct PMTilesReloader;
 static NEXT_CACHE_ID: LazyLock<AtomicUsize> = LazyLock::new(|| AtomicUsize::new(0));
 
 #[async_trait::async_trait]
-impl FileSourceLoader for PMTilesReloader {
+impl TileSourceWatcher for PMTilesReloader {
     fn can_handle(&self, path: &Path) -> bool {
         path.extension().is_some_and(|e| e == "pmtiles")
     }
 
-    async fn load_file(&self, tsm: &TileSourceManager, path: PathBuf) -> MartinResult<String> {
+    async fn load_file(&self, tsm: &TileSourceManager, path: PathBuf) -> MartinResult<ReloadAdvisory> {
         Self::load_file(tsm, path).await
     }
 
@@ -45,7 +45,7 @@ impl FileSourceLoader for PMTilesReloader {
         tsm: &TileSourceManager,
         id: &str,
         path: PathBuf,
-    ) -> MartinResult<()> {
+    ) -> MartinResult<ReloadAdvisory> {
         Self::reload_source(tsm, id, path).await
     }
 }
@@ -60,26 +60,33 @@ impl PMTilesReloader {
     ///
     /// If a source with the same ID already exists it is replaced in-place and
     /// its tile-cache entries are invalidated.
-    pub async fn load_file(tsm: &TileSourceManager, path: PathBuf) -> MartinResult<String> {
+    pub async fn load_file(tsm: &TileSourceManager, path: PathBuf) -> MartinResult<ReloadAdvisory> {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
         let id = tsm.resolve_id(&name, path.display().to_string());
-        let source = Self::open_source(id.clone(), path).await?;
-        tsm.upsert_source(Box::new(source));
-        Ok(id)
+        let source = Self::open_source(id, path).await?;
+        Ok(ReloadAdvisory {
+            added: vec![Box::new(source)],
+            changed: vec![],
+            removed: vec![],
+        })
     }
 
-    /// Loads multiple PMTiles files in order, returning all assigned IDs.
+    /// Loads multiple PMTiles files, applying each advisory to `tsm`, and
+    /// returns all assigned source IDs.
     pub async fn load_files(
         tsm: &TileSourceManager,
         paths: Vec<PathBuf>,
     ) -> MartinResult<Vec<String>> {
         let mut ids = Vec::with_capacity(paths.len());
         for path in paths {
-            ids.push(Self::load_file(tsm, path).await?);
+            let advisory = Self::load_file(tsm, path).await?;
+            let new_ids = advisory.added_ids();
+            tsm.apply_advisory(advisory);
+            ids.extend(new_ids);
         }
         Ok(ids)
     }
@@ -94,10 +101,13 @@ impl PMTilesReloader {
         tsm: &TileSourceManager,
         id: &str,
         path: PathBuf,
-    ) -> MartinResult<()> {
+    ) -> MartinResult<ReloadAdvisory> {
         let source = Self::open_source(id.to_string(), path).await?;
-        tsm.upsert_source(Box::new(source));
-        Ok(())
+        Ok(ReloadAdvisory {
+            added: vec![],
+            changed: vec![Box::new(source)],
+            removed: vec![],
+        })
     }
 
     /// Creates a [`PmtilesSource`] from a local file path.

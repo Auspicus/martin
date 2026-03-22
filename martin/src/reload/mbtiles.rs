@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use martin_core::tiles::mbtiles::MbtSource;
 
 #[cfg(feature = "_file_watcher")]
-use super::FileSourceLoader;
-use super::TileSourceManager;
+use super::TileSourceWatcher;
+use super::{ReloadAdvisory, TileSourceManager};
 use crate::MartinResult;
 
 /// Loads and reloads MBTiles tile sources into a [`TileSourceManager`].
@@ -21,12 +21,12 @@ pub struct MBTilesReloader;
 
 #[cfg(feature = "_file_watcher")]
 #[async_trait::async_trait]
-impl FileSourceLoader for MBTilesReloader {
+impl TileSourceWatcher for MBTilesReloader {
     fn can_handle(&self, path: &Path) -> bool {
         path.extension().is_some_and(|e| e == "mbtiles")
     }
 
-    async fn load_file(&self, tsm: &TileSourceManager, path: PathBuf) -> MartinResult<String> {
+    async fn load_file(&self, tsm: &TileSourceManager, path: PathBuf) -> MartinResult<ReloadAdvisory> {
         Self::load_file(tsm, path).await
     }
 
@@ -35,7 +35,7 @@ impl FileSourceLoader for MBTilesReloader {
         tsm: &TileSourceManager,
         id: &str,
         path: PathBuf,
-    ) -> MartinResult<()> {
+    ) -> MartinResult<ReloadAdvisory> {
         Self::reload_source(tsm, id, path).await
     }
 }
@@ -50,7 +50,7 @@ impl MBTilesReloader {
     ///
     /// If a source with the same ID already exists it is replaced in-place and
     /// its tile-cache entries are invalidated.
-    pub async fn load_file(tsm: &TileSourceManager, path: PathBuf) -> MartinResult<String> {
+    pub async fn load_file(tsm: &TileSourceManager, path: PathBuf) -> MartinResult<ReloadAdvisory> {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -59,19 +59,26 @@ impl MBTilesReloader {
         // Use the full display path as the unique discriminator so that two
         // files with the same stem get distinct IDs.
         let id = tsm.resolve_id(&name, path.display().to_string());
-        let source = MbtSource::new(id.clone(), path).await?;
-        tsm.upsert_source(Box::new(source));
-        Ok(id)
+        let source = MbtSource::new(id, path).await?;
+        Ok(ReloadAdvisory {
+            added: vec![Box::new(source)],
+            changed: vec![],
+            removed: vec![],
+        })
     }
 
-    /// Loads multiple MBTiles files in order, returning all assigned IDs.
+    /// Loads multiple MBTiles files, applying each advisory to `tsm`, and
+    /// returns all assigned source IDs.
     pub async fn load_files(
         tsm: &TileSourceManager,
         paths: Vec<PathBuf>,
     ) -> MartinResult<Vec<String>> {
         let mut ids = Vec::with_capacity(paths.len());
         for path in paths {
-            ids.push(Self::load_file(tsm, path).await?);
+            let advisory = Self::load_file(tsm, path).await?;
+            let new_ids = advisory.added_ids();
+            tsm.apply_advisory(advisory);
+            ids.extend(new_ids);
         }
         Ok(ids)
     }
@@ -86,9 +93,12 @@ impl MBTilesReloader {
         tsm: &TileSourceManager,
         id: &str,
         path: PathBuf,
-    ) -> MartinResult<()> {
+    ) -> MartinResult<ReloadAdvisory> {
         let source = MbtSource::new(id.to_string(), path).await?;
-        tsm.upsert_source(Box::new(source));
-        Ok(())
+        Ok(ReloadAdvisory {
+            added: vec![],
+            changed: vec![Box::new(source)],
+            removed: vec![],
+        })
     }
 }

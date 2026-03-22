@@ -42,30 +42,62 @@ pub mod cog;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
-/// Trait implemented by each file-based tile source format to plug into [`TileFileWatcher`](watcher::TileFileWatcher).
+/// A declaration of one or more tile-source changes observed by a [`TileSourceWatcher`].
 ///
-/// A loader encapsulates format-specific knowledge (e.g. which file extension
-/// it handles) so the generic watcher stays free of any per-format details.
+/// Advisories are produced by watchers and consumed by the [`TileSourceManager`] via
+/// [`apply_advisory`](TileSourceManager::apply_advisory).  The TSM decides what
+/// catalog and cache operations to perform; watchers only declare what has changed.
+///
+/// A single advisory may describe multiple simultaneous changes (e.g. a batch
+/// file load that touches several sources at once).
+pub struct ReloadAdvisory {
+    /// Sources newly loaded and ready to be registered.
+    pub added: Vec<BoxedSource>,
+    /// Sources reloaded with new data under the same stable ID.
+    pub changed: Vec<BoxedSource>,
+    /// IDs of sources that have been removed.
+    pub removed: Vec<String>,
+}
+
+impl ReloadAdvisory {
+    /// Returns the IDs of all sources in the `added` list.
+    ///
+    /// Useful for callers that need to record new source IDs (e.g. the watcher
+    /// updating its `path_to_id` map) before passing the advisory to the TSM.
+    #[must_use]
+    pub fn added_ids(&self) -> Vec<String> {
+        self.added.iter().map(|s| s.get_id().to_string()).collect()
+    }
+}
+
+/// Trait implemented by each tile-source watcher to plug into [`TileFileWatcher`](watcher::TileFileWatcher).
+///
+/// A watcher encapsulates format- or backend-specific knowledge (e.g. which
+/// file extension it handles, or how to query a Postgres database for changes)
+/// and produces [`ReloadAdvisory`] values that the generic watcher forwards to
+/// the [`TileSourceManager`].
 #[cfg(feature = "_file_watcher")]
 #[async_trait::async_trait]
-pub trait FileSourceLoader: Send + Sync {
-    /// Returns `true` if this loader can handle the given file path.
+pub trait TileSourceWatcher: Send + Sync {
+    /// Returns `true` if this watcher can handle the given file path.
     fn can_handle(&self, path: &std::path::Path) -> bool;
 
-    /// Open the file at `path`, register it in `tsm`, and return the assigned source ID.
+    /// Open the file at `path` and return a [`ReloadAdvisory`] with the new
+    /// source in [`ReloadAdvisory::added`].
     async fn load_file(
         &self,
         tsm: &TileSourceManager,
         path: std::path::PathBuf,
-    ) -> crate::MartinResult<String>;
+    ) -> crate::MartinResult<ReloadAdvisory>;
 
-    /// Re-open the file at `path` and replace the source registered under `id`.
+    /// Re-open the file at `path` and return a [`ReloadAdvisory`] with the
+    /// refreshed source in [`ReloadAdvisory::changed`].
     async fn reload_source(
         &self,
         tsm: &TileSourceManager,
         id: &str,
         path: std::path::PathBuf,
-    ) -> crate::MartinResult<()>;
+    ) -> crate::MartinResult<ReloadAdvisory>;
 }
 
 /// Central coordinator for live tile-source catalog updates.
@@ -112,6 +144,22 @@ impl TileSourceManager {
             tsm.upsert_source(source);
         }
         tsm
+    }
+
+    /// Applies a [`ReloadAdvisory`] produced by a [`TileSourceWatcher`].
+    ///
+    /// - Sources in [`added`](ReloadAdvisory::added) and
+    ///   [`changed`](ReloadAdvisory::changed) are upserted; existing entries
+    ///   with the same ID have their tile-cache entries invalidated.
+    /// - Sources in [`removed`](ReloadAdvisory::removed) are removed and their
+    ///   tile-cache entries are invalidated.
+    pub fn apply_advisory(&self, advisory: ReloadAdvisory) {
+        for source in advisory.added.into_iter().chain(advisory.changed) {
+            self.upsert_source(source);
+        }
+        for id in &advisory.removed {
+            self.remove_source(id);
+        }
     }
 
     /// Resolves a stable, unique, non-reserved ID for a new source.

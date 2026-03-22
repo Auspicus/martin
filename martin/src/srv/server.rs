@@ -191,7 +191,7 @@ pub fn new_server(
     #[cfg(feature = "_file_watcher")]
     if let Some(paths) = watch_paths {
         let tsm_watch = state.tsm.clone();
-        let mut loaders: Vec<std::sync::Arc<dyn crate::reload::FileSourceLoader>> = vec![];
+        let mut loaders: Vec<std::sync::Arc<dyn crate::reload::TileSourceWatcher>> = vec![];
         #[cfg(feature = "mbtiles")]
         loaders.push(std::sync::Arc::new(
             crate::reload::mbtiles::MBTilesReloader,

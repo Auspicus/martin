@@ -8,20 +8,20 @@ use std::path::{Path, PathBuf};
 
 use martin_core::tiles::cog::CogSource;
 
-use super::{FileSourceLoader, TileSourceManager};
+use super::{ReloadAdvisory, TileSourceManager, TileSourceWatcher};
 use crate::MartinResult;
 
 /// Loads and reloads COG tile sources into a [`TileSourceManager`].
 pub struct COGReloader;
 
 #[async_trait::async_trait]
-impl FileSourceLoader for COGReloader {
+impl TileSourceWatcher for COGReloader {
     fn can_handle(&self, path: &Path) -> bool {
         path.extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("tif") || e.eq_ignore_ascii_case("tiff"))
     }
 
-    async fn load_file(&self, tsm: &TileSourceManager, path: PathBuf) -> MartinResult<String> {
+    async fn load_file(&self, tsm: &TileSourceManager, path: PathBuf) -> MartinResult<ReloadAdvisory> {
         Self::load_file(tsm, path).await
     }
 
@@ -30,7 +30,7 @@ impl FileSourceLoader for COGReloader {
         tsm: &TileSourceManager,
         id: &str,
         path: PathBuf,
-    ) -> MartinResult<()> {
+    ) -> MartinResult<ReloadAdvisory> {
         Self::reload_source(tsm, id, path).await
     }
 }
@@ -45,26 +45,33 @@ impl COGReloader {
     ///
     /// If a source with the same ID already exists it is replaced in-place and
     /// its tile-cache entries are invalidated.
-    pub async fn load_file(tsm: &TileSourceManager, path: PathBuf) -> MartinResult<String> {
+    pub async fn load_file(tsm: &TileSourceManager, path: PathBuf) -> MartinResult<ReloadAdvisory> {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
         let id = tsm.resolve_id(&name, path.display().to_string());
-        let source = CogSource::new(id.clone(), path)?;
-        tsm.upsert_source(Box::new(source));
-        Ok(id)
+        let source = CogSource::new(id, path)?;
+        Ok(ReloadAdvisory {
+            added: vec![Box::new(source)],
+            changed: vec![],
+            removed: vec![],
+        })
     }
 
-    /// Loads multiple COG files in order, returning all assigned IDs.
+    /// Loads multiple COG files, applying each advisory to `tsm`, and
+    /// returns all assigned source IDs.
     pub async fn load_files(
         tsm: &TileSourceManager,
         paths: Vec<PathBuf>,
     ) -> MartinResult<Vec<String>> {
         let mut ids = Vec::with_capacity(paths.len());
         for path in paths {
-            ids.push(Self::load_file(tsm, path).await?);
+            let advisory = Self::load_file(tsm, path).await?;
+            let new_ids = advisory.added_ids();
+            tsm.apply_advisory(advisory);
+            ids.extend(new_ids);
         }
         Ok(ids)
     }
@@ -79,9 +86,12 @@ impl COGReloader {
         tsm: &TileSourceManager,
         id: &str,
         path: PathBuf,
-    ) -> MartinResult<()> {
+    ) -> MartinResult<ReloadAdvisory> {
         let source = CogSource::new(id.to_string(), path)?;
-        tsm.upsert_source(Box::new(source));
-        Ok(())
+        Ok(ReloadAdvisory {
+            added: vec![],
+            changed: vec![Box::new(source)],
+            removed: vec![],
+        })
     }
 }

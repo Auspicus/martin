@@ -3,7 +3,7 @@
 //! [`TileFileWatcher::start`] spawns a background task that watches registered
 //! tile files and directories for changes, forwarding them to the
 //! [`TileSourceManager`].  Format-specific knowledge lives in the
-//! [`FileSourceLoader`](super::FileSourceLoader) implementations passed to
+//! [`TileSourceWatcher`](super::TileSourceWatcher) implementations passed to
 //! `start` — the watcher itself is format-agnostic.
 //!
 //! ## Implementation note: directory watching
@@ -24,7 +24,7 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use super::{FileSourceLoader, TileSourceManager};
+use super::{ReloadAdvisory, TileSourceManager, TileSourceWatcher};
 
 /// Paths needed to start the tile filesystem watcher.
 pub struct WatchPaths {
@@ -41,7 +41,7 @@ impl TileFileWatcher {
     /// Spawn a background task that reacts to filesystem events.
     ///
     /// `loaders` is a list of format-specific handlers; the watcher consults
-    /// them (via [`FileSourceLoader::can_handle`]) to decide whether to act on
+    /// them (via [`TileSourceWatcher::can_handle`]) to decide whether to act on
     /// a file and which loader to use.
     ///
     /// - **Modified file** → source is hot-reloaded in the TSM.
@@ -51,7 +51,7 @@ impl TileFileWatcher {
     pub async fn start(
         tsm: TileSourceManager,
         paths: WatchPaths,
-        loaders: Vec<Arc<dyn FileSourceLoader>>,
+        loaders: Vec<Arc<dyn TileSourceWatcher>>,
     ) {
         let WatchPaths {
             id_to_path,
@@ -138,15 +138,16 @@ async fn handle_event(
     tsm: &TileSourceManager,
     path_to_id: &DashMap<PathBuf, String>,
     watched_dirs: &[PathBuf],
-    loaders: &[Arc<dyn FileSourceLoader>],
+    loaders: &[Arc<dyn TileSourceWatcher>],
 ) {
     match kind {
         EventKind::Modify(_) => {
             if let Some(id) = path_to_id.get(canon).map(|r| r.clone()) {
                 if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
                     info!("Reloading source `{id}` (file changed: {})", canon.display());
-                    if let Err(e) = loader.reload_source(tsm, &id, path.clone()).await {
-                        warn!("Reload of `{id}` failed: {e}");
+                    match loader.reload_source(tsm, &id, path.clone()).await {
+                        Ok(advisory) => tsm.apply_advisory(advisory),
+                        Err(e) => warn!("Reload of `{id}` failed: {e}"),
                     }
                 }
             }
@@ -157,7 +158,11 @@ async fn handle_event(
                     "Removing source `{id}` (file deleted: {})",
                     canon.display()
                 );
-                tsm.remove_source(&id);
+                tsm.apply_advisory(ReloadAdvisory {
+                    added: vec![],
+                    changed: vec![],
+                    removed: vec![id],
+                });
             }
         }
         EventKind::Create(_) => {
@@ -168,8 +173,9 @@ async fn handle_event(
                         "Reloading source `{id}` (file replaced: {})",
                         canon.display()
                     );
-                    if let Err(e) = loader.reload_source(tsm, &id, path.clone()).await {
-                        warn!("Reload of `{id}` failed: {e}");
+                    match loader.reload_source(tsm, &id, path.clone()).await {
+                        Ok(advisory) => tsm.apply_advisory(advisory),
+                        Err(e) => warn!("Reload of `{id}` failed: {e}"),
                     }
                 }
             }
@@ -189,8 +195,12 @@ async fn handle_event(
                 if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
                     info!("Loading new source from {}", path.display());
                     match loader.load_file(tsm, path.clone()).await {
-                        Ok(id) => {
-                            path_to_id.insert(canon.clone(), id);
+                        Ok(advisory) => {
+                            let added_ids = advisory.added_ids();
+                            tsm.apply_advisory(advisory);
+                            for id in added_ids {
+                                path_to_id.insert(canon.clone(), id);
+                            }
                         }
                         Err(e) => {
                             warn!("Failed to load {}: {e}", path.display());

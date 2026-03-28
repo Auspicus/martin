@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use martin::config::file::tiles::reload::mbtiles::MBTilesReloader;
-use martin::reload::ReloadAdvisory;
-use martin::reload::TileSourceManager;
+use martin::config::file::reload::ReloadAdvisory;
+use martin::config::file::reload::TileSourceManager;
 use martin_core::tiles::NO_TILE_CACHE;
 use mbtiles::sqlx::{self, Connection as _};
 use mbtiles::Mbtiles;

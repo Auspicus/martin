@@ -1,4 +1,4 @@
-//! Cloud Optimized GeoTIFF reloader for the [`TileSourceManager`](crate::reload::TileSourceManager).
+//! Cloud Optimized GeoTIFF reloader for the [`TileSourceManager`](crate::config::file::reload::TileSourceManager).
 //!
 //! [`COGReloader`] is the bridge between the filesystem and the TSM for COG
 //! tile sources.  Call [`load_file`](COGReloader::load_file) to add (or replace)
@@ -13,7 +13,7 @@ use martin_core::tiles::cog::CogSource;
 
 use crate::MartinResult;
 use crate::config::primitives::IdResolver;
-use crate::reload::{ReloadAdvisory, TileSourceManager};
+use crate::config::file::reload::{ReloadAdvisory, TileSourceManager};
 
 /// Loads and reloads COG tile sources.
 pub struct COGReloader;

@@ -6,7 +6,7 @@ use crate::MartinResult;
 #[cfg(feature = "_catalog")]
 use crate::config::file::ServerState;
 #[cfg(feature = "_tiles")]
-use crate::reload::TileSourceManager;
+use crate::config::file::reload::TileSourceManager;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Catalog {

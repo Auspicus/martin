@@ -1,6 +1,8 @@
 mod file_config;
 pub use file_config::*;
 
+pub mod reload;
+
 mod main;
 pub use main::*;
 pub mod cache;

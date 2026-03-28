@@ -1,6 +1,6 @@
 use criterion::async_executor::FuturesExecutor;
 use criterion::{Criterion, criterion_group, criterion_main};
-use martin::reload::TileSourceManager;
+use martin::config::file::reload::TileSourceManager;
 use martin::srv::DynTileSource;
 use martin_core::tiles::NO_TILE_CACHE;
 use martin_tile_utils::TileCoord;

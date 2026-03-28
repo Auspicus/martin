@@ -20,9 +20,9 @@ use martin::config::file::postgres::{
 use martin::config::primitives::IdResolver;
 use martin::config::primitives::OptBoolObj;
 use martin::config::primitives::OptOneMany;
-use martin::reload::ReloadAdvisory;
-use martin::reload::TileSourceManager;
-use martin::reload::postgres::{PostgresPollSetup, PostgresPoller};
+use martin::config::file::reload::ReloadAdvisory;
+use martin::config::file::reload::TileSourceManager;
+use martin::config::file::reload::postgres::{PostgresPollSetup, PostgresPoller};
 use martin::srv::RESERVED_KEYWORDS;
 use martin_core::tiles::NO_TILE_CACHE;
 use martin_core::tiles::postgres::PostgresPool;

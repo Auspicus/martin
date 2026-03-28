@@ -18,7 +18,7 @@ use crate::config::args::WebUiMode;
 use crate::config::file::ServerState;
 use crate::config::file::srv::{KEEP_ALIVE_DEFAULT, LISTEN_ADDRESSES_DEFAULT, SrvConfig};
 #[cfg(feature = "_file_watcher")]
-use crate::reload::WatchPaths;
+use crate::config::file::reload::WatchPaths;
 use crate::srv::admin::Catalog;
 use crate::{MartinError, MartinResult};
 
@@ -192,7 +192,7 @@ pub fn new_server(
     // values here; the TSM advisory loop applies them to the catalog.
     #[cfg(any(feature = "_file_watcher", feature = "postgres"))]
     let (advisory_tx, advisory_rx) =
-        tokio::sync::mpsc::channel::<crate::reload::ReloadAdvisory>(64);
+        tokio::sync::mpsc::channel::<crate::config::file::reload::ReloadAdvisory>(64);
 
     #[cfg(any(feature = "_file_watcher", feature = "postgres"))]
     state.tsm.clone().run_advisory_loop(advisory_rx);
@@ -263,7 +263,7 @@ pub fn new_server(
     // channel is available).
     #[cfg(feature = "postgres")]
     for setup in state.pg_poll_setups {
-        crate::reload::postgres::PostgresPoller::start(advisory_tx.clone(), setup);
+        crate::config::file::reload::postgres::PostgresPoller::start(advisory_tx.clone(), setup);
     }
 
     let keep_alive = Duration::from_secs(config.keep_alive.unwrap_or(KEEP_ALIVE_DEFAULT));

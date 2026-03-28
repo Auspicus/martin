@@ -18,7 +18,7 @@ use tracing::warn;
 
 use crate::config::args::PreferredEncoding;
 use crate::config::file::srv::SrvConfig;
-use crate::reload::TileSourceManager;
+use crate::config::file::reload::TileSourceManager;
 use crate::srv::server::{DebouncedWarning, map_internal_error};
 use martin_tile_utils::{decode_zlib, decode_zstd, encode_zlib, encode_zstd};
 
@@ -469,7 +469,7 @@ mod tests {
     use martin_core::tiles::NO_TILE_CACHE;
 
     use super::*;
-    use crate::reload::TileSourceManager;
+    use crate::config::file::reload::TileSourceManager;
     use crate::srv::tiles::tests::{CompressedTestSource, TestSource};
 
     #[rstest]

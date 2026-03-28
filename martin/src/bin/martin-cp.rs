@@ -552,7 +552,7 @@ mod tests {
 
     use async_trait::async_trait;
     use insta::assert_yaml_snapshot;
-    use martin::reload::TileSourceManager;
+    use martin::config::file::reload::TileSourceManager;
     use martin_core::tiles::{MartinCoreResult, NO_TILE_CACHE, Source, UrlQuery};
     use martin_tile_utils::{Encoding, Format};
     use rstest::{fixture, rstest};

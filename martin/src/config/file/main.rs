@@ -8,7 +8,7 @@ use clap::ValueEnum;
 #[cfg(feature = "_tiles")]
 use futures::future::{BoxFuture, try_join_all};
 #[cfg(feature = "_tiles")]
-use crate::reload::TileSourceManager;
+use crate::config::file::reload::TileSourceManager;
 #[cfg(feature = "pmtiles")]
 use martin_core::tiles::pmtiles::PmtCache;
 use serde::{Deserialize, Serialize};
@@ -58,7 +58,7 @@ pub struct ServerState {
     /// rather than here in `Config::resolve` where the channel does not exist
     /// yet.
     #[cfg(feature = "postgres")]
-    pub pg_poll_setups: Vec<crate::reload::postgres::PostgresPollSetup>,
+    pub pg_poll_setups: Vec<crate::config::file::reload::postgres::PostgresPollSetup>,
 
     #[cfg(feature = "sprites")]
     pub sprites: martin_core::sprites::SpriteSources,
@@ -251,12 +251,12 @@ impl Config {
         // (i.e. full auto-discovery) for subsequent poll cycles, and share
         // the same IdResolver so source IDs remain stable across polls.
         #[cfg(feature = "postgres")]
-        let pg_poll_setups: Vec<crate::reload::postgres::PostgresPollSetup> = self
+        let pg_poll_setups: Vec<crate::config::file::reload::postgres::PostgresPollSetup> = self
             .postgres
             .iter()
             .filter_map(|pg| {
                 pg.watch_interval_secs.map(|secs| {
-                    crate::reload::postgres::PostgresPollSetup {
+                    crate::config::file::reload::postgres::PostgresPollSetup {
                         config: pg.clone(),
                         idr: resolver.clone(),
                         interval: std::time::Duration::from_secs(secs),

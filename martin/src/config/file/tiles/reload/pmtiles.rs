@@ -1,4 +1,4 @@
-//! PMTiles reloader for the [`TileSourceManager`](crate::reload::TileSourceManager).
+//! PMTiles reloader for the [`TileSourceManager`](crate::config::file::reload::TileSourceManager).
 //!
 //! [`PMTilesReloader`] is the bridge between the filesystem and the TSM for
 //! PMTiles tile sources.  Call [`load_file`](PMTilesReloader::load_file) to add
@@ -23,7 +23,7 @@ use url::Url;
 use crate::MartinResult;
 use crate::config::file::ConfigFileError;
 use crate::config::primitives::IdResolver;
-use crate::reload::{ReloadAdvisory, TileSourceManager};
+use crate::config::file::reload::{ReloadAdvisory, TileSourceManager};
 
 /// Loads and reloads PMTiles tile sources.
 pub struct PMTilesReloader;

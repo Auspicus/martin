@@ -4,8 +4,6 @@
 pub mod config;
 pub mod logging;
 
-pub mod reload;
-
 mod error;
 pub use error::{MartinError, MartinResult};
 

@@ -1,4 +1,4 @@
-//! MBTiles reloader for the [`TileSourceManager`](crate::reload::TileSourceManager).
+//! MBTiles reloader for the [`TileSourceManager`](crate::config::file::reload::TileSourceManager).
 //!
 //! [`MBTilesReloader`] is the bridge between the filesystem and the TSM for
 //! MBTiles tile sources.  Call [`load_file`](MBTilesReloader::load_file) to add
@@ -15,7 +15,7 @@ use martin_core::tiles::mbtiles::MbtSource;
 
 use crate::MartinResult;
 use crate::config::primitives::IdResolver;
-use crate::reload::{ReloadAdvisory, TileSourceManager};
+use crate::config::file::reload::{ReloadAdvisory, TileSourceManager};
 
 /// Loads and reloads MBTiles tile sources.
 pub struct MBTilesReloader;

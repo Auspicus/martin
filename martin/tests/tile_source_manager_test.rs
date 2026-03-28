@@ -1,7 +1,7 @@
 #![cfg(feature = "mbtiles")]
 
 use martin::config::file::tiles::reload::mbtiles::MBTilesReloader;
-use martin::reload::TileSourceManager;
+use martin::config::file::reload::TileSourceManager;
 use martin_core::tiles::NO_TILE_CACHE;
 use martin_tile_utils::{Format, TileCoord};
 use mbtiles::temp_named_mbtiles;

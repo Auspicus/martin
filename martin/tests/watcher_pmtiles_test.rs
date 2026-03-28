@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use martin::config::file::tiles::reload::pmtiles::PMTilesReloader;
-use martin::reload::ReloadAdvisory;
-use martin::reload::TileSourceManager;
+use martin::config::file::reload::ReloadAdvisory;
+use martin::config::file::reload::TileSourceManager;
 use martin_core::tiles::NO_TILE_CACHE;
 use tempfile::tempdir;
 use tokio::sync::mpsc;

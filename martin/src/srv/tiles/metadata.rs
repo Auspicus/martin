@@ -13,7 +13,7 @@ use tilejson::{TileJSON, tilejson};
 use url::form_urlencoded;
 
 use crate::config::file::srv::SrvConfig;
-use crate::reload::TileSourceManager;
+use crate::config::file::reload::TileSourceManager;
 
 #[derive(Deserialize)]
 pub struct SourceIDsRequest {

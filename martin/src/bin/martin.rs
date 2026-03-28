@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
@@ -93,71 +92,34 @@ fn extract_watch_paths(config: &Config) -> Option<WatchPaths> {
         return None;
     }
 
-    let mut id_to_path: HashMap<String, PathBuf> = HashMap::new();
     let mut watched_dirs: Vec<PathBuf> = Vec::new();
 
     #[cfg(feature = "mbtiles")]
     if let FileConfigEnum::Config(cfg) = &config.mbtiles {
-        collect_local_sources(cfg, &mut id_to_path, &mut watched_dirs, |_| true);
+        for path in cfg.paths.iter().filter(|p| p.is_dir()) {
+            watched_dirs.push(path.clone());
+        }
     }
 
     #[cfg(feature = "pmtiles")]
     if let FileConfigEnum::Config(cfg) = &config.pmtiles {
-        collect_local_sources(cfg, &mut id_to_path, &mut watched_dirs, is_local_path);
+        for path in cfg.paths.iter().filter(|p| p.is_dir()) {
+            watched_dirs.push(path.clone());
+        }
     }
 
     #[cfg(feature = "unstable-cog")]
     if let FileConfigEnum::Config(cfg) = &config.cog {
-        collect_local_sources(cfg, &mut id_to_path, &mut watched_dirs, |_| true);
-    }
-
-    if id_to_path.is_empty() && watched_dirs.is_empty() {
-        return None;
-    }
-
-    Some(WatchPaths {
-        id_to_path,
-        watched_dirs,
-    })
-}
-
-/// Collects source paths and watched directories from a [`FileConfig`] into
-/// the provided maps, filtering individual sources with `keep`.
-#[cfg(feature = "_file_watcher")]
-fn collect_local_sources<T>(
-    cfg: &martin::config::file::FileConfig<T>,
-    id_to_path: &mut HashMap<String, PathBuf>,
-    watched_dirs: &mut Vec<PathBuf>,
-    keep: impl Fn(&PathBuf) -> bool,
-) where
-    T: martin::config::file::ConfigurationLivecycleHooks,
-{
-    if let Some(sources) = &cfg.sources {
-        for (id, src) in sources {
-            let path = src.get_path();
-            if keep(path) {
-                id_to_path.insert(id.clone(), path.clone());
-            }
-        }
-    }
-    for path in cfg.paths.iter() {
-        if keep(path) {
+        for path in cfg.paths.iter().filter(|p| p.is_dir()) {
             watched_dirs.push(path.clone());
         }
     }
-}
 
-/// Returns `true` if `path` looks like a local filesystem path rather than a
-/// remote object-store URL.
-#[cfg(feature = "_file_watcher")]
-fn is_local_path(path: &PathBuf) -> bool {
-    !path.to_str().is_some_and(|s| {
-        s.starts_with("http://")
-            || s.starts_with("https://")
-            || s.starts_with("s3://")
-            || s.starts_with("gs://")
-            || s.starts_with("az://")
-    })
+    if watched_dirs.is_empty() {
+        return None;
+    }
+
+    Some(WatchPaths { watched_dirs, ..Default::default() })
 }
 
 #[tokio::main]

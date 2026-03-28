@@ -118,6 +118,26 @@ impl PostgresAutoDiscoveryBuilder {
         })
     }
 
+    /// Creates a builder reusing an existing [`PostgresPool`].
+    ///
+    /// Skips pool creation (no version-check queries on the new connection).
+    /// All other setup mirrors [`new`](Self::new).  Intended for poll loops
+    /// that want to amortize the pool-initialisation cost across many ticks.
+    pub fn with_pool(pool: PostgresPool, config: &PostgresConfig, id_resolver: IdResolver) -> Self {
+        let (auto_tables, auto_functions) = calc_auto(config);
+        Self {
+            pool,
+            default_srid: config.default_srid,
+            auto_bounds: config.auto_bounds.unwrap_or_default(),
+            max_feature_count: config.max_feature_count,
+            id_resolver,
+            tables: config.tables.clone().unwrap_or_default(),
+            functions: config.functions.clone().unwrap_or_default(),
+            auto_functions,
+            auto_tables,
+        }
+    }
+
     /// Returns the bounds calculation type for this builder.
     #[must_use]
     pub fn auto_bounds(&self) -> BoundsCalcType {

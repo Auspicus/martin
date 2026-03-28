@@ -1,13 +1,11 @@
 //! Integration tests for the COG filesystem watcher.
 //!
 //! These tests confirm that:
-//! - a deleted `.tif` file removes the source from the TSM
-//! - an overwritten `.tif` file triggers a source reload in the TSM
 //! - a new `.tif` file in a watched directory is loaded automatically
+//! - a `.tif` file that was discovered via the watcher is removed when deleted
 
 #![cfg(all(feature = "unstable-cog", feature = "_file_watcher"))]
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -42,90 +40,6 @@ fn make_advisory_tx(tsm: &TileSourceManager) -> mpsc::Sender<ReloadAdvisory> {
     tx
 }
 
-/// Start a watcher that tracks a single file already loaded in the TSM.
-async fn start_file_watcher(
-    tsm: &TileSourceManager,
-    tx: mpsc::Sender<ReloadAdvisory>,
-    id: &str,
-    path: &PathBuf,
-) {
-    let idr = tsm.id_resolver();
-    let mut id_to_path = HashMap::new();
-    id_to_path.insert(id.to_string(), path.clone());
-    COGReloader::start(idr, tx, id_to_path, vec![]).await;
-}
-
-// ---------------------------------------------------------------------------
-// Test: deleted file removes source
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn cog_watcher_removes_source_on_file_deletion() {
-    let dir = tempdir().expect("tempdir");
-    let path = dir.path().join("naip.tif");
-
-    std::fs::copy(cog_fixture(), &path).expect("copy fixture");
-
-    let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let advisory = COGReloader::load_file(&tsm.id_resolver(), path.clone())
-        .await
-        .expect("load_file");
-    let id = advisory.added_ids().into_iter().next().expect("added a source");
-    tsm.apply_advisory(advisory);
-
-    assert!(
-        tsm.get_source(&id).is_some(),
-        "source should be present before deletion"
-    );
-
-    let tx = make_advisory_tx(&tsm);
-    start_file_watcher(&tsm, tx, &id, &path).await;
-    wait_for_watcher_init().await;
-
-    std::fs::remove_file(&path).expect("remove file");
-    wait_for_event().await;
-
-    assert!(
-        tsm.get_source(&id).is_none(),
-        "source should be removed after file deletion"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Test: overwritten file reloads source
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn cog_watcher_reloads_source_on_file_modification() {
-    let dir = tempdir().expect("tempdir");
-    let path = dir.path().join("naip.tif");
-
-    std::fs::copy(cog_fixture(), &path).expect("copy fixture");
-
-    let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let advisory = COGReloader::load_file(&tsm.id_resolver(), path.clone())
-        .await
-        .expect("load_file");
-    let id = advisory.added_ids().into_iter().next().expect("added a source");
-    tsm.apply_advisory(advisory);
-
-    assert!(tsm.get_source(&id).is_some(), "source must exist before reload");
-
-    let tx = make_advisory_tx(&tsm);
-    start_file_watcher(&tsm, tx, &id, &path).await;
-    wait_for_watcher_init().await;
-
-    // Overwrite the file in-place with a valid copy of the same fixture.
-    // This triggers IN_MODIFY / IN_CLOSE_WRITE without replacing the inode.
-    std::fs::copy(cog_fixture(), &path).expect("overwrite fixture");
-    wait_for_event().await;
-
-    assert!(
-        tsm.get_source(&id).is_some(),
-        "source should still be present after reload"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Test: new file in watched directory is loaded
 // ---------------------------------------------------------------------------
@@ -140,10 +54,8 @@ async fn cog_watcher_loads_new_file_in_watched_directory() {
     COGReloader::start(
         tsm.id_resolver(),
         tx,
-        HashMap::new(),
         vec![dir.path().to_path_buf()],
-    )
-    .await;
+    );
     wait_for_watcher_init().await;
 
     let path = dir.path().join("new_source.tif");
@@ -156,5 +68,43 @@ async fn cog_watcher_loads_new_file_in_watched_directory() {
         ids.len(),
         1,
         "watcher should have loaded the new COG file; found: {ids:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: file discovered by watcher is removed when deleted
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cog_watcher_removes_source_on_file_deletion() {
+    let dir = tempdir().expect("tempdir");
+
+    let tsm = TileSourceManager::new(NO_TILE_CACHE);
+    let tx = make_advisory_tx(&tsm);
+
+    // Start the watcher watching the directory.
+    COGReloader::start(
+        tsm.id_resolver(),
+        tx,
+        vec![dir.path().to_path_buf()],
+    );
+    wait_for_watcher_init().await;
+
+    // Create the file — watcher discovers it and loads it into the TSM.
+    let path = dir.path().join("naip.tif");
+    std::fs::copy(cog_fixture(), &path).expect("copy fixture");
+    wait_for_event().await;
+
+    let ids = tsm.source_ids();
+    assert_eq!(ids.len(), 1, "source should be present after discovery; found: {ids:?}");
+    let id = ids.into_iter().next().unwrap();
+
+    // Delete the file — watcher should remove it from the TSM.
+    std::fs::remove_file(&path).expect("remove file");
+    wait_for_event().await;
+
+    assert!(
+        tsm.get_source(&id).is_none(),
+        "source should be removed after file deletion"
     );
 }

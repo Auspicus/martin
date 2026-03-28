@@ -2,8 +2,7 @@
 //!
 //! [`PMTilesReloader`] is the bridge between the filesystem and the TSM for
 //! PMTiles tile sources.  Call [`load_file`](PMTilesReloader::load_file) to add
-//! (or replace) a single source, or [`load_files`](PMTilesReloader::load_files)
-//! for a batch.
+//! a single source, or [`load_files`](PMTilesReloader::load_files) for a batch.
 //!
 //! Only **local** file paths are supported; remote object-store URLs (S3, GCS,
 //! Azure, …) cannot be watched by the filesystem watcher and must not be passed
@@ -32,16 +31,18 @@ pub struct PMTilesReloader;
 static NEXT_CACHE_ID: LazyLock<AtomicUsize> = LazyLock::new(|| AtomicUsize::new(0));
 
 impl PMTilesReloader {
-    /// Spawn a background task that watches `id_to_path` connections and
-    /// `watched_dirs` for new `.pmtiles` files.
+    /// Spawn a background task that watches `watched_dirs` for new `.pmtiles`
+    /// files and for deletions of previously-discovered files.
     ///
     /// Raw filesystem events are received from an embedded [`TileFileWatcher`]
     /// and translated into [`ReloadAdvisory`] values sent to `tx`.
+    ///
+    /// Only **directory connections** are watched.  Individually configured
+    /// file sources are static for the lifetime of the process.
     #[cfg(feature = "_file_watcher")]
-    pub async fn start(
+    pub fn start(
         idr: IdResolver,
         tx: tokio::sync::mpsc::Sender<ReloadAdvisory>,
-        id_to_path: HashMap<String, PathBuf>,
         watched_dirs: Vec<PathBuf>,
     ) {
         use dashmap::DashMap;
@@ -49,42 +50,16 @@ impl PMTilesReloader {
 
         use super::watcher::{FileChange, TileFileWatcher};
 
-        let path_to_id: DashMap<PathBuf, String> = id_to_path
-            .iter()
-            .map(|(id, path)| {
-                let canon = path.canonicalize().unwrap_or_else(|_| path.clone());
-                (canon, id.clone())
-            })
-            .collect();
-
-        let tracked_files: Vec<PathBuf> = path_to_id.iter().map(|e| e.key().clone()).collect();
+        // Maps canonical file path → source ID for files discovered at runtime.
+        // Starts empty; populated by New events, cleaned up by Deleted events.
+        let path_to_id: DashMap<PathBuf, String> = DashMap::new();
 
         let (file_tx, mut file_rx) = tokio::sync::mpsc::channel::<FileChange>(256);
-        TileFileWatcher::start(tracked_files, watched_dirs, file_tx).await;
+        TileFileWatcher::start(watched_dirs, file_tx);
 
         tokio::spawn(async move {
             while let Some(change) = file_rx.recv().await {
                 match change {
-                    FileChange::Modified(canon) => {
-                        if !canon.extension().is_some_and(|e| e == "pmtiles") {
-                            continue;
-                        }
-                        if let Some(id) = path_to_id.get(&canon).map(|r| r.clone()) {
-                            info!("Reloading source `{id}` (file changed: {})", canon.display());
-                            let advisory = match Self::reload_source(&id, canon).await {
-                                Ok(a) => Some(a),
-                                Err(e) => {
-                                    warn!("Reload of `{id}` failed: {e}");
-                                    None
-                                }
-                            };
-                            if let Some(advisory) = advisory {
-                                if tx.send(advisory).await.is_err() {
-                                    warn!("Advisory channel closed; dropping reload advisory");
-                                }
-                            }
-                        }
-                    }
                     FileChange::Deleted(canon) => {
                         if let Some((_, id)) = path_to_id.remove(&canon) {
                             info!(
@@ -92,9 +67,8 @@ impl PMTilesReloader {
                                 canon.display()
                             );
                             let advisory = ReloadAdvisory {
-                                added: vec![],
-                                changed: vec![],
                                 removed: vec![id],
+                                ..Default::default()
                             };
                             if tx.send(advisory).await.is_err() {
                                 warn!("Advisory channel closed; dropping reload advisory");
@@ -118,8 +92,8 @@ impl PMTilesReloader {
                             if tx.send(advisory).await.is_err() {
                                 warn!("Advisory channel closed; dropping reload advisory");
                             }
-                            for id in added_ids {
-                                path_to_id.insert(canon.clone(), id);
+                            if let Some(id) = added_ids.into_iter().next() {
+                                path_to_id.insert(canon, id);
                             }
                         }
                     }
@@ -143,8 +117,7 @@ impl PMTilesReloader {
         let source = Self::open_source(id, path).await?;
         Ok(ReloadAdvisory {
             added: vec![Box::new(source)],
-            changed: vec![],
-            removed: vec![],
+            ..Default::default()
         })
     }
 
@@ -163,17 +136,6 @@ impl PMTilesReloader {
             ids.extend(new_ids);
         }
         Ok(ids)
-    }
-
-    /// Re-opens the PMTiles file at `path` and returns a [`ReloadAdvisory`]
-    /// with the refreshed source in [`ReloadAdvisory::changed`].
-    pub async fn reload_source(id: &str, path: PathBuf) -> MartinResult<ReloadAdvisory> {
-        let source = Self::open_source(id.to_string(), path).await?;
-        Ok(ReloadAdvisory {
-            added: vec![],
-            changed: vec![Box::new(source)],
-            removed: vec![],
-        })
     }
 
     /// Creates a [`PmtilesSource`] from a local file path.
@@ -197,4 +159,3 @@ impl PMTilesReloader {
         Ok(source)
     }
 }
-

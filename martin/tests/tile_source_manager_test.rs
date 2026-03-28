@@ -1,7 +1,8 @@
 #![cfg(feature = "mbtiles")]
 
 use martin::config::file::tiles::reload::mbtiles::MBTilesReloader;
-use martin::config::file::reload::TileSourceManager;
+use martin::config::file::reload::{ReloadAdvisory, TileSourceManager};
+use martin_core::tiles::mbtiles::MbtSource;
 use martin_core::tiles::NO_TILE_CACHE;
 use martin_tile_utils::{Format, TileCoord};
 use mbtiles::temp_named_mbtiles;
@@ -162,9 +163,14 @@ async fn reload_source_replaces_existing() {
     let (_mbt2, _conn2, path2) =
         temp_named_mbtiles("tsm_reload_v2", MVT_MODIFIED_SCRIPT).await;
 
-    let advisory = MBTilesReloader::reload_source(&id, path2)
+    // Build a "changed" advisory directly: open the new file under the same ID.
+    let source = MbtSource::new(id.clone(), path2)
         .await
-        .expect("reload_source should succeed");
+        .expect("MbtSource::new should succeed");
+    let advisory = ReloadAdvisory {
+        changed: vec![Box::new(source)],
+        ..Default::default()
+    };
     tsm.apply_advisory(advisory);
 
     // The source should still be accessible under the same ID.

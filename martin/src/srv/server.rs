@@ -192,7 +192,7 @@ pub fn new_server(
     // values here; the TSM advisory loop applies them to the catalog.
     #[cfg(any(feature = "_file_watcher", feature = "postgres"))]
     let (advisory_tx, advisory_rx) =
-        tokio::sync::mpsc::channel::<crate::config::file::reload::ReloadAdvisory>(64);
+        tokio::sync::mpsc::channel::<crate::config::file::reload::ReloadAdvisory>(256);
 
     #[cfg(any(feature = "_file_watcher", feature = "postgres"))]
     state.tsm.clone().run_advisory_loop(advisory_rx);
@@ -202,61 +202,25 @@ pub fn new_server(
         let idr = state.tsm.id_resolver();
 
         #[cfg(feature = "mbtiles")]
-        {
-            let mbt_paths: std::collections::HashMap<String, std::path::PathBuf> = paths
-                .id_to_path
-                .iter()
-                .filter(|(_, p)| p.extension().is_some_and(|e| e == "mbtiles"))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            tokio::spawn(
-                crate::config::file::tiles::reload::mbtiles::MBTilesReloader::start(
-                    idr.clone(),
-                    advisory_tx.clone(),
-                    mbt_paths,
-                    paths.watched_dirs.clone(),
-                ),
-            );
-        }
+        crate::config::file::tiles::reload::mbtiles::MBTilesReloader::start(
+            idr.clone(),
+            advisory_tx.clone(),
+            paths.watched_dirs.clone(),
+        );
 
         #[cfg(feature = "pmtiles")]
-        {
-            let pmt_paths: std::collections::HashMap<String, std::path::PathBuf> = paths
-                .id_to_path
-                .iter()
-                .filter(|(_, p)| p.extension().is_some_and(|e| e == "pmtiles"))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            tokio::spawn(
-                crate::config::file::tiles::reload::pmtiles::PMTilesReloader::start(
-                    idr.clone(),
-                    advisory_tx.clone(),
-                    pmt_paths,
-                    paths.watched_dirs.clone(),
-                ),
-            );
-        }
+        crate::config::file::tiles::reload::pmtiles::PMTilesReloader::start(
+            idr.clone(),
+            advisory_tx.clone(),
+            paths.watched_dirs.clone(),
+        );
 
         #[cfg(feature = "unstable-cog")]
-        {
-            let cog_paths: std::collections::HashMap<String, std::path::PathBuf> = paths
-                .id_to_path
-                .iter()
-                .filter(|(_, p)| {
-                    p.extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case("tif") || e.eq_ignore_ascii_case("tiff"))
-                })
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            tokio::spawn(
-                crate::config::file::tiles::reload::cog::COGReloader::start(
-                    idr.clone(),
-                    advisory_tx.clone(),
-                    cog_paths,
-                    paths.watched_dirs.clone(),
-                ),
-            );
-        }
+        crate::config::file::tiles::reload::cog::COGReloader::start(
+            idr.clone(),
+            advisory_tx.clone(),
+            paths.watched_dirs.clone(),
+        );
     }
 
     // Start Postgres pollers (moved here from Config::resolve so the advisory

@@ -2,8 +2,7 @@
 //!
 //! [`MBTilesReloader`] is the bridge between the filesystem and the TSM for
 //! MBTiles tile sources.  Call [`load_file`](MBTilesReloader::load_file) to add
-//! (or replace) a single source, or [`load_files`](MBTilesReloader::load_files)
-//! for a batch.
+//! a single source, or [`load_files`](MBTilesReloader::load_files) for a batch.
 //!
 //! The [`start`](MBTilesReloader::start) method embeds a [`TileFileWatcher`]
 //! and translates raw [`FileChange`] events into [`ReloadAdvisory`] values that
@@ -21,16 +20,18 @@ use crate::config::file::reload::{ReloadAdvisory, TileSourceManager};
 pub struct MBTilesReloader;
 
 impl MBTilesReloader {
-    /// Spawn a background task that watches `id_to_path` connections and
-    /// `watched_dirs` for new `.mbtiles` files.
+    /// Spawn a background task that watches `watched_dirs` for new `.mbtiles`
+    /// files and for deletions of previously-discovered files.
     ///
     /// Raw filesystem events are received from an embedded [`TileFileWatcher`]
     /// and translated into [`ReloadAdvisory`] values sent to `tx`.
+    ///
+    /// Only **directory connections** are watched.  Individually configured
+    /// file sources are static for the lifetime of the process.
     #[cfg(feature = "_file_watcher")]
-    pub async fn start(
+    pub fn start(
         idr: IdResolver,
         tx: tokio::sync::mpsc::Sender<ReloadAdvisory>,
-        id_to_path: std::collections::HashMap<String, PathBuf>,
         watched_dirs: Vec<PathBuf>,
     ) {
         use dashmap::DashMap;
@@ -38,43 +39,16 @@ impl MBTilesReloader {
 
         use super::watcher::{FileChange, TileFileWatcher};
 
-        // Build canonical reverse map: path → source ID.
-        let path_to_id: DashMap<PathBuf, String> = id_to_path
-            .iter()
-            .map(|(id, path)| {
-                let canon = path.canonicalize().unwrap_or_else(|_| path.clone());
-                (canon, id.clone())
-            })
-            .collect();
-
-        let tracked_files: Vec<PathBuf> = path_to_id.iter().map(|e| e.key().clone()).collect();
+        // Maps canonical file path → source ID for files discovered at runtime.
+        // Starts empty; populated by New events, cleaned up by Deleted events.
+        let path_to_id: DashMap<PathBuf, String> = DashMap::new();
 
         let (file_tx, mut file_rx) = tokio::sync::mpsc::channel::<FileChange>(256);
-        TileFileWatcher::start(tracked_files, watched_dirs, file_tx).await;
+        TileFileWatcher::start(watched_dirs, file_tx);
 
         tokio::spawn(async move {
             while let Some(change) = file_rx.recv().await {
                 match change {
-                    FileChange::Modified(canon) => {
-                        if !canon.extension().is_some_and(|e| e == "mbtiles") {
-                            continue;
-                        }
-                        if let Some(id) = path_to_id.get(&canon).map(|r| r.clone()) {
-                            info!("Reloading source `{id}` (file changed: {})", canon.display());
-                            let advisory = match Self::reload_source(&id, canon).await {
-                                Ok(a) => Some(a),
-                                Err(e) => {
-                                    warn!("Reload of `{id}` failed: {e}");
-                                    None
-                                }
-                            };
-                            if let Some(advisory) = advisory {
-                                if tx.send(advisory).await.is_err() {
-                                    warn!("Advisory channel closed; dropping reload advisory");
-                                }
-                            }
-                        }
-                    }
                     FileChange::Deleted(canon) => {
                         if let Some((_, id)) = path_to_id.remove(&canon) {
                             info!(
@@ -82,9 +56,8 @@ impl MBTilesReloader {
                                 canon.display()
                             );
                             let advisory = ReloadAdvisory {
-                                added: vec![],
-                                changed: vec![],
                                 removed: vec![id],
+                                ..Default::default()
                             };
                             if tx.send(advisory).await.is_err() {
                                 warn!("Advisory channel closed; dropping reload advisory");
@@ -108,8 +81,8 @@ impl MBTilesReloader {
                             if tx.send(advisory).await.is_err() {
                                 warn!("Advisory channel closed; dropping reload advisory");
                             }
-                            for id in added_ids {
-                                path_to_id.insert(canon.clone(), id);
+                            if let Some(id) = added_ids.into_iter().next() {
+                                path_to_id.insert(canon, id);
                             }
                         }
                     }
@@ -133,8 +106,7 @@ impl MBTilesReloader {
         let source = MbtSource::new(id, path).await?;
         Ok(ReloadAdvisory {
             added: vec![Box::new(source)],
-            changed: vec![],
-            removed: vec![],
+            ..Default::default()
         })
     }
 
@@ -157,19 +129,5 @@ impl MBTilesReloader {
             ids.extend(new_ids);
         }
         Ok(ids)
-    }
-
-    /// Re-opens the MBTiles file at `path` and returns a [`ReloadAdvisory`]
-    /// with the refreshed source in [`ReloadAdvisory::changed`].
-    ///
-    /// The caller supplies the stable `id` so the same URL remains valid after
-    /// the reload.
-    pub async fn reload_source(id: &str, path: PathBuf) -> MartinResult<ReloadAdvisory> {
-        let source = MbtSource::new(id.to_string(), path).await?;
-        Ok(ReloadAdvisory {
-            added: vec![],
-            changed: vec![Box::new(source)],
-            removed: vec![],
-        })
     }
 }

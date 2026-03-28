@@ -1,20 +1,25 @@
 //! Primitive filesystem watcher for tile source file changes.
 //!
-//! [`TileFileWatcher::start`] spawns a background task that watches registered
-//! paths for filesystem events and emits raw [`FileChange`] values.
+//! [`TileFileWatcher::start`] spawns a background task that watches configured
+//! directories for filesystem events and emits raw [`FileChange`] values.
 //! Format-specific logic (extension filtering, source loading, advisory
 //! construction) belongs entirely to the callers — the per-format reloaders
 //! that embed this watcher.
 //!
+//! ## Scope
+//!
+//! Only **directory connections** are watched.  Individually configured file
+//! sources (named in the config under `sources:`) are considered static for
+//! the lifetime of the process; if such a file disappears that is an operator
+//! error, not a lifecycle event the server should absorb silently.
+//!
 //! ## Implementation note: directory watching
 //!
-//! We watch **parent directories** rather than individual files.  On
-//! overlay/container filesystems (common in CI and Docker) inotify
-//! `DELETE_SELF` for individual file watches is unreliable, whereas
-//! `IN_DELETE` delivered on a directory watch works correctly on all
-//! supported kernels.
+//! We watch the configured directories directly.  On overlay/container
+//! filesystems (common in CI and Docker) inotify `DELETE_SELF` for individual
+//! file watches is unreliable, whereas `IN_DELETE` delivered on a directory
+//! watch works correctly on all supported kernels.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use dashmap::DashSet;
@@ -25,9 +30,7 @@ use tracing::warn;
 
 /// A raw filesystem change event emitted by [`TileFileWatcher`].
 pub enum FileChange {
-    /// A tracked file was modified and still exists on disk.
-    Modified(PathBuf),
-    /// A tracked file was deleted (or replaced by a deletion-then-create cycle).
+    /// A directory-discovered file was deleted.
     Deleted(PathBuf),
     /// A new file was fully written to a watched directory.
     New(PathBuf),
@@ -41,35 +44,32 @@ pub enum FileChange {
 pub struct TileFileWatcher;
 
 impl TileFileWatcher {
-    /// Spawn a background task watching `tracked_files` and `watch_dirs`.
+    /// Spawn a background task watching `watch_dirs`.
     ///
-    /// - Modifications to a file in `tracked_files` → [`FileChange::Modified`].
-    /// - Deletions of a file in `tracked_files` → [`FileChange::Deleted`].
     /// - New files fully written to a directory in `watch_dirs` →
-    ///   [`FileChange::New`] (the path is also added to the tracked set so
-    ///   subsequent modifications are also reported).
+    ///   [`FileChange::New`].  The path is added to an internal tracking set
+    ///   so subsequent deletions of the same file are also reported.
+    /// - Deletions of a previously-seen file → [`FileChange::Deleted`].
+    ///
+    /// File modifications are intentionally not reported — reloading a file
+    /// that is actively being served is undefined behaviour (stale cached
+    /// tiles, open file handles).
     ///
     /// All emitted paths are **canonical** (resolved via
     /// [`std::fs::canonicalize`] at event time, falling back to the raw path
     /// when the file no longer exists).
     ///
     /// Events are delivered to `tx`.
-    pub async fn start(
-        tracked_files: Vec<PathBuf>,
-        watch_dirs: Vec<PathBuf>,
-        tx: mpsc::Sender<FileChange>,
-    ) {
-        // Canonicalize tracked files and store in a concurrent set.
-        let tracked_paths: DashSet<PathBuf> = tracked_files
-            .into_iter()
-            .map(|p| p.canonicalize().unwrap_or(p))
-            .collect();
-
+    pub fn start(watch_dirs: Vec<PathBuf>, tx: mpsc::Sender<FileChange>) {
         // Canonicalize watched directories.
         let watch_dirs: Vec<PathBuf> = watch_dirs
-            .iter()
-            .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
+            .into_iter()
+            .map(|d| d.canonicalize().unwrap_or(d))
             .collect();
+
+        // Tracks files that arrived via New events so deletions can be reported.
+        // Starts empty; populated at runtime.
+        let tracked_paths: DashSet<PathBuf> = DashSet::new();
 
         // fs_tx/fs_rx carry raw notify events into the async event loop.
         let (fs_tx, mut fs_rx) = mpsc::channel::<Event>(256);
@@ -89,18 +89,7 @@ impl TileFileWatcher {
             }
         };
 
-        // Watch parent dirs of each tracked file plus the configured watch dirs.
-        let mut dirs_to_watch: HashSet<PathBuf> = HashSet::new();
-        for path in tracked_paths.iter() {
-            if let Some(parent) = path.parent() {
-                dirs_to_watch.insert(parent.to_path_buf());
-            }
-        }
         for dir in &watch_dirs {
-            dirs_to_watch.insert(dir.clone());
-        }
-
-        for dir in &dirs_to_watch {
             if let Err(e) = watcher.watch(dir, RecursiveMode::NonRecursive) {
                 warn!("Cannot watch directory {}: {e}", dir.display());
             }
@@ -136,15 +125,13 @@ async fn handle_event(
 ) {
     match kind {
         EventKind::Modify(_) => {
-            if tracked_paths.contains(canon) {
-                if !path.exists() {
-                    // Some kernels/filesystems emit Modify instead of Remove
-                    // when a file is deleted — treat it as a deletion.
-                    tracked_paths.remove(canon);
-                    send_change(tx, FileChange::Deleted(canon.clone())).await;
-                } else {
-                    send_change(tx, FileChange::Modified(canon.clone())).await;
-                }
+            // Some kernels/filesystems emit Modify instead of Remove when a
+            // file is deleted — treat it as a deletion.  If the file still
+            // exists we ignore the event: in-place modifications are undefined
+            // behaviour (stale cached tiles, open handles).
+            if tracked_paths.contains(canon) && !path.exists() {
+                tracked_paths.remove(canon);
+                send_change(tx, FileChange::Deleted(canon.clone())).await;
             }
         }
         EventKind::Remove(_) => {
@@ -163,12 +150,8 @@ async fn handle_event(
             }
         }
         EventKind::Create(_) => {
-            // If a tracked path was re-created (e.g. atomically replaced),
-            // treat it as a modification so the reloader refreshes the source.
-            if tracked_paths.contains(canon) {
-                send_change(tx, FileChange::Modified(canon.clone())).await;
-            }
-            // Genuinely new files are loaded after Close(Write) below.
+            // Nothing to do: new files are loaded after Close(Write) below to
+            // avoid reading a partially-written file.
         }
         // Load new files after the write is complete and the file descriptor
         // closed, avoiding attempts to open a partially-written file.
@@ -180,7 +163,7 @@ async fn handle_event(
                 .iter()
                 .any(|dir| canon.parent().is_some_and(|p| p == dir));
             if in_watched {
-                // Track the new path so future Modify events are reported.
+                // Track the new path so future Delete events are reported.
                 tracked_paths.insert(canon.clone());
                 send_change(tx, FileChange::New(canon.clone())).await;
             }

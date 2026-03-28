@@ -181,6 +181,46 @@ impl ConfigurationLivecycleHooks for PostgresCfgPublishFuncs {
 }
 
 impl PostgresConfig {
+    /// Re-discovers tables and functions using an existing [`PostgresPool`].
+    ///
+    /// Unlike [`resolve`](Self::resolve) this method:
+    /// - Does **not** create a new pool (skips the two version-check queries).
+    /// - Does **not** mutate `self.tables` / `self.functions`.
+    ///
+    /// It is intended for the poll loop in [`PostgresPoller`] where pool
+    /// creation overhead must be amortised across many ticks.
+    ///
+    /// [`PostgresPoller`]: crate::config::file::reload::PostgresPoller
+    pub async fn discover_with_pool(
+        &self,
+        pool: martin_core::tiles::postgres::PostgresPool,
+        id_resolver: IdResolver,
+    ) -> MartinResult<Vec<BoxedSource>> {
+        use futures::future::try_join;
+        let pg = PostgresAutoDiscoveryBuilder::with_pool(pool, self, id_resolver);
+        let inst_tables = on_slow(
+            pg.instantiate_tables(),
+            DEFAULT_BOUNDS_TIMEOUT.add(Duration::from_secs(1)),
+            || {
+                if pg.auto_bounds() == BoundsCalcType::Skip {
+                    warn!(
+                        "Discovering tables in PostgreSQL database '{}' is taking too long. Bounds calculation is already disabled. You may need to tune your database.",
+                        pg.get_id()
+                    );
+                } else {
+                    warn!(
+                        "Discovering tables in PostgreSQL database '{}' is taking too long. Make sure your table geo columns have a GIS index, or use '--auto-bounds skip' CLI/config to skip bbox calculation.",
+                        pg.get_id()
+                    );
+                }
+            },
+        );
+        let ((mut tables, _, _), (funcs, _, _)) =
+            try_join(inst_tables, pg.instantiate_functions()).await?;
+        tables.extend(funcs);
+        Ok(tables)
+    }
+
     pub async fn resolve(
         &mut self,
         id_resolver: IdResolver,

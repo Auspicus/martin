@@ -18,21 +18,22 @@
 //!
 //! ## Pool lifecycle
 //!
-//! A fresh [`PostgresPool`] (and therefore fresh DB connections) is created on
-//! each poll cycle.  Pool initialisation performs two lightweight queries to
-//! check the Postgres and PostGIS versions; the actual table discovery follows.
-//! For typical polling intervals (≥ 30 s) this overhead is negligible.
+//! A single [`PostgresPool`] is created when the poller starts and reused for
+//! every subsequent poll cycle.  This avoids the two lightweight version-check
+//! queries that pool initialisation performs, which would otherwise fire on
+//! every tick.
 //!
 //! [`watch_interval_secs`]: crate::config::file::postgres::PostgresConfig::watch_interval_secs
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use martin_core::tiles::postgres::PostgresPool;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::ReloadAdvisory;
-use crate::config::file::postgres::PostgresConfig;
+use crate::config::file::postgres::{POOL_SIZE_DEFAULT, PostgresConfig};
 use crate::config::primitives::IdResolver;
 
 /// Everything needed to start a Postgres polling watcher.
@@ -67,9 +68,10 @@ impl PostgresPoller {
     /// Spawn a background task that polls the configured connection at the
     /// given interval and sends [`ReloadAdvisory`] values into `tx`.
     ///
-    /// On each poll the config is cloned and fully re-resolved (new connection
-    /// pool, fresh table/function discovery).  The resulting source set is
-    /// diffed against the locally-tracked state:
+    /// A [`PostgresPool`] is created once at task startup and reused on every
+    /// tick.  On each poll the full table/function discovery is re-run against
+    /// the existing pool.  The resulting source set is diffed against the
+    /// locally-tracked state:
     ///
     /// - **New** sources (not previously known) are sent as
     ///   [`added`](ReloadAdvisory::added).
@@ -80,7 +82,7 @@ impl PostgresPoller {
     ///   [`removed`](ReloadAdvisory::removed).
     ///
     /// If nothing changed no advisory is sent and the TSM is left untouched.
-    /// The task exits if `tx` is closed (i.e. the advisory consumer has stopped).
+    /// The task exits if pool creation fails at startup or if `tx` is closed.
     pub fn start(tx: mpsc::Sender<ReloadAdvisory>, setup: PostgresPollSetup) {
         let PostgresPollSetup { config, idr, interval } = setup;
 
@@ -90,6 +92,23 @@ impl PostgresPoller {
                 .as_deref()
                 .unwrap_or("unknown")
                 .to_string();
+
+            // Create the pool once; reuse it on every poll tick.
+            let pool = match PostgresPool::new(
+                config.connection_string.as_ref().unwrap().as_str(),
+                config.ssl_certificates.ssl_cert.as_ref(),
+                config.ssl_certificates.ssl_key.as_ref(),
+                config.ssl_certificates.ssl_root_cert.as_ref(),
+                config.pool_size.unwrap_or(POOL_SIZE_DEFAULT),
+            )
+            .await
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("Postgres poll watcher for {conn_id}: failed to create pool: {e}");
+                    return;
+                }
+            };
 
             info!(
                 "Starting Postgres poll watcher for {conn_id} \
@@ -111,9 +130,11 @@ impl PostgresPoller {
 
                 debug!("Polling Postgres sources for {conn_id}");
 
-                let mut cfg_clone = config.clone();
-                let new_sources = match cfg_clone.resolve(idr.clone()).await {
-                    Ok((sources, _warnings)) => sources,
+                let new_sources = match config
+                    .discover_with_pool(pool.clone(), idr.clone())
+                    .await
+                {
+                    Ok(sources) => sources,
                     Err(e) => {
                         warn!("Postgres poll failed for {conn_id}: {e}");
                         continue;

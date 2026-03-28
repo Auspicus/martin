@@ -196,7 +196,6 @@ impl PostgresPoller {
                 if tx
                     .send(ReloadAdvisory {
                         added,
-                        changed,
                         removed,
                     })
                     .await

@@ -15,7 +15,8 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, Watcher};
 use tracing::{info, warn};
 
 use crate::MartinResult;
-use crate::config::file::reload::{ReloadAdvisory, TileSourceManager};
+use crate::config::file::ConfigFileError;
+use crate::config::file::reload::{ReloadAdvisory};
 use crate::config::primitives::IdResolver;
 
 /// Loads and reloads COG tile sources.
@@ -88,7 +89,7 @@ impl COGReloader {
                                 warn!("Advisory channel closed; dropping reload advisory");
                             }
                         }
-                        EventKind::Create(_) | EventKind::Access(AccessKind::Close(..)) => {
+                        EventKind::Create(_) | EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
                             info!("Loading new source from {}", canon.display());
                             let result = match Self::load_file(&idr, canon.clone()).await {
                                 Ok(a) => Some(a),
@@ -119,7 +120,7 @@ impl COGReloader {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
+            .ok_or_else(|| ConfigFileError::NoFileStem(path.clone()))?
             .to_string();
         let id = idr.resolve(&name, path.display().to_string());
         let source = CogSource::new(id, path)?;
@@ -127,22 +128,5 @@ impl COGReloader {
             added: vec![Box::new(source)],
             ..Default::default()
         })
-    }
-
-    /// Loads multiple COG files, applying each advisory to `tsm`, and
-    /// returns all assigned source IDs.
-    pub async fn load_files(
-        tsm: &TileSourceManager,
-        paths: Vec<PathBuf>,
-    ) -> MartinResult<Vec<String>> {
-        let idr = tsm.id_resolver();
-        let mut ids = Vec::with_capacity(paths.len());
-        for path in paths {
-            let advisory = Self::load_file(&idr, path).await?;
-            let new_ids = advisory.added_ids();
-            tsm.apply_advisory(advisory);
-            ids.extend(new_ids);
-        }
-        Ok(ids)
     }
 }

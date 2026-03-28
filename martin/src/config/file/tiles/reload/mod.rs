@@ -57,8 +57,6 @@ pub struct WatchPaths {
 pub struct ReloadAdvisory {
     /// Sources newly loaded and ready to be registered.
     pub added: Vec<BoxedSource>,
-    /// Sources reloaded with new data under the same stable ID.
-    pub changed: Vec<BoxedSource>,
     /// IDs of sources that have been removed.
     pub removed: Vec<String>,
 }
@@ -128,7 +126,7 @@ impl TileSourceManager {
     /// - Sources in [`removed`](ReloadAdvisory::removed) are removed and their
     ///   tile-cache entries are invalidated.
     pub fn apply_advisory(&self, advisory: ReloadAdvisory) {
-        for source in advisory.added.into_iter().chain(advisory.changed) {
+        for source in advisory.added {
             self.upsert_source(source);
         }
         for id in &advisory.removed {

@@ -1,9 +1,8 @@
 #![cfg(feature = "mbtiles")]
 
-use martin::config::file::reload::{ReloadAdvisory, TileSourceManager};
+use martin::config::file::reload::TileSourceManager;
 use martin::config::file::tiles::reload::mbtiles::MBTilesReloader;
 use martin_core::tiles::NO_TILE_CACHE;
-use martin_core::tiles::mbtiles::MbtSource;
 use martin_tile_utils::{Format, TileCoord};
 use mbtiles::temp_named_mbtiles;
 
@@ -13,8 +12,6 @@ use mbtiles::temp_named_mbtiles;
 
 const MVT_SCRIPT: &str = include_str!("../../tests/fixtures/mbtiles/world_cities.sql");
 const PNG_SCRIPT: &str = include_str!("../../tests/fixtures/mbtiles/geography-class-png.sql");
-const MVT_MODIFIED_SCRIPT: &str =
-    include_str!("../../tests/fixtures/mbtiles/world_cities_modified.sql");
 
 /// Load a file, apply the advisory, and return the assigned source ID.
 async fn load_file(tsm: &TileSourceManager, path: std::path::PathBuf) -> String {
@@ -46,25 +43,6 @@ async fn load_single_source_is_accessible() {
         .get_source(&id)
         .expect("source should be findable by its ID");
     assert_eq!(source.get_id(), id);
-}
-
-#[tokio::test]
-async fn load_multiple_sources_all_accessible() {
-    let (_mbt1, _conn1, path1) = temp_named_mbtiles("tsm_multi_1", MVT_SCRIPT).await;
-    let (_mbt2, _conn2, path2) = temp_named_mbtiles("tsm_multi_2", PNG_SCRIPT).await;
-
-    let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let ids = MBTilesReloader::load_files(&tsm, vec![path1, path2])
-        .await
-        .expect("load_files should succeed");
-
-    assert_eq!(ids.len(), 2, "two IDs should be returned");
-    for id in &ids {
-        assert!(
-            tsm.get_source(id).is_some(),
-            "source {id} should be registered"
-        );
-    }
 }
 
 #[tokio::test]
@@ -147,42 +125,6 @@ async fn remove_source_makes_it_inaccessible() {
 async fn remove_nonexistent_source_returns_false() {
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     assert!(!tsm.remove_source("does_not_exist"));
-}
-
-// ---------------------------------------------------------------------------
-// Hot-reload (upsert)
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn reload_source_replaces_existing() {
-    // Load initial version.
-    let (_mbt1, _conn1, path1) = temp_named_mbtiles("tsm_reload_v1", MVT_SCRIPT).await;
-
-    let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let id = load_file(&tsm, path1).await;
-
-    // "Reload" using a modified version of the same data (different in-memory db).
-    let (_mbt2, _conn2, path2) = temp_named_mbtiles("tsm_reload_v2", MVT_MODIFIED_SCRIPT).await;
-
-    // Build a "changed" advisory directly: open the new file under the same ID.
-    let source = MbtSource::new(id.clone(), path2)
-        .await
-        .expect("MbtSource::new should succeed");
-    let advisory = ReloadAdvisory {
-        changed: vec![Box::new(source)],
-        ..Default::default()
-    };
-    tsm.apply_advisory(advisory);
-
-    // The source should still be accessible under the same ID.
-    let source = tsm
-        .get_source(&id)
-        .expect("source should still exist after reload");
-    assert_eq!(
-        source.get_id(),
-        id,
-        "ID should remain stable across reloads"
-    );
 }
 
 // ---------------------------------------------------------------------------

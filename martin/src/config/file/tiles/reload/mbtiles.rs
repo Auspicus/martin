@@ -13,7 +13,8 @@ use std::path::PathBuf;
 use martin_core::tiles::mbtiles::MbtSource;
 
 use crate::MartinResult;
-use crate::config::file::reload::{ReloadAdvisory, TileSourceManager};
+use crate::config::file::ConfigFileError;
+use crate::config::file::reload::{ReloadAdvisory};
 use crate::config::primitives::IdResolver;
 
 use notify::event::AccessKind;
@@ -69,6 +70,8 @@ impl MBTilesReloader {
                     .iter()
                     .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
                 {
+                    use notify::event::AccessMode;
+
                     if !canon.extension().is_some_and(|e| e == "mbtiles") {
                         continue;
                     }
@@ -88,7 +91,7 @@ impl MBTilesReloader {
                                 warn!("Advisory channel closed; dropping reload advisory");
                             }
                         }
-                        EventKind::Create(_) | EventKind::Access(AccessKind::Close(..)) => {
+                        EventKind::Create(_) | EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
                             info!("Loading new source from {}", canon.display());
                             let result = match Self::load_file(&idr, canon.clone()).await {
                                 Ok(a) => Some(a),
@@ -119,7 +122,7 @@ impl MBTilesReloader {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
+            .ok_or_else(|| ConfigFileError::NoFileStem(path.clone()))?
             .to_string();
         let id = idr.resolve(&name, path.display().to_string());
         let source = MbtSource::new(id, path).await?;
@@ -127,26 +130,5 @@ impl MBTilesReloader {
             added: vec![Box::new(source)],
             ..Default::default()
         })
-    }
-
-    /// Loads multiple MBTiles files, applying each advisory to `tsm`, and
-    /// returns all assigned source IDs.
-    ///
-    /// This is a convenience helper for batch loading (e.g. in tests).  It
-    /// applies advisories directly to the TSM rather than going through the
-    /// advisory channel.
-    pub async fn load_files(
-        tsm: &TileSourceManager,
-        paths: Vec<PathBuf>,
-    ) -> MartinResult<Vec<String>> {
-        let idr = tsm.id_resolver();
-        let mut ids = Vec::with_capacity(paths.len());
-        for path in paths {
-            let advisory = Self::load_file(&idr, path).await?;
-            let new_ids = advisory.added_ids();
-            tsm.apply_advisory(advisory);
-            ids.extend(new_ids);
-        }
-        Ok(ids)
     }
 }

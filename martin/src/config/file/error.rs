@@ -23,6 +23,9 @@ pub enum ConfigFileError {
     #[error("Source path is not a file: {0}")]
     InvalidFilePath(PathBuf),
 
+    #[error("Source path has no usable file stem: {0}")]
+    NoFileStem(PathBuf),
+
     #[error("Error {0} while parsing URL {1}")]
     InvalidSourceUrl(#[source] url::ParseError, String),
 

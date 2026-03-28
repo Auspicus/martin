@@ -21,7 +21,7 @@ use url::Url;
 
 use crate::MartinResult;
 use crate::config::file::ConfigFileError;
-use crate::config::file::reload::{ReloadAdvisory, TileSourceManager};
+use crate::config::file::reload::ReloadAdvisory;
 use crate::config::primitives::IdResolver;
 
 use notify::event::AccessKind;
@@ -80,6 +80,8 @@ impl PMTilesReloader {
                     .iter()
                     .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
                 {
+                    use notify::event::AccessMode;
+
                     if !canon.extension().is_some_and(|e| e == "pmtiles") {
                         continue;
                     }
@@ -99,7 +101,7 @@ impl PMTilesReloader {
                                 warn!("Advisory channel closed; dropping reload advisory");
                             }
                         }
-                        EventKind::Create(_) | EventKind::Access(AccessKind::Close(..)) => {
+                        EventKind::Create(_) | EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
                             info!("Loading new source from {}", canon.display());
                             let result = match Self::load_file(&idr, canon.clone()).await {
                                 Ok(a) => Some(a),
@@ -130,35 +132,9 @@ impl PMTilesReloader {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
+            .ok_or_else(|| ConfigFileError::NoFileStem(path.clone()))?
             .to_string();
         let id = idr.resolve(&name, path.display().to_string());
-        let source = Self::open_source(id, path).await?;
-        Ok(ReloadAdvisory {
-            added: vec![Box::new(source)],
-            ..Default::default()
-        })
-    }
-
-    /// Loads multiple PMTiles files, applying each advisory to `tsm`, and
-    /// returns all assigned source IDs.
-    pub async fn load_files(
-        tsm: &TileSourceManager,
-        paths: Vec<PathBuf>,
-    ) -> MartinResult<Vec<String>> {
-        let idr = tsm.id_resolver();
-        let mut ids = Vec::with_capacity(paths.len());
-        for path in paths {
-            let advisory = Self::load_file(&idr, path).await?;
-            let new_ids = advisory.added_ids();
-            tsm.apply_advisory(advisory);
-            ids.extend(new_ids);
-        }
-        Ok(ids)
-    }
-
-    /// Creates a [`PmtilesSource`] from a local file path.
-    async fn open_source(id: String, path: PathBuf) -> MartinResult<PmtilesSource> {
         let path = path
             .canonicalize()
             .map_err(|e| ConfigFileError::IoError(e, path.clone()))?;
@@ -175,6 +151,10 @@ impl PMTilesReloader {
                 .map_err(|e| ConfigFileError::ObjectStoreUrlParsing(e, id.clone()))?;
 
         let source = PmtilesSource::new(cache, id, store, store_path).await?;
-        Ok(source)
+
+        Ok(ReloadAdvisory {
+            added: vec![Box::new(source)],
+            ..Default::default()
+        })
     }
 }

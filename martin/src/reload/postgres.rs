@@ -1,8 +1,8 @@
 //! PostgreSQL polling reloader for the [`TileSourceManager`](super::TileSourceManager).
 //!
 //! [`PostgresPoller`] periodically re-discovers tables and functions from a
-//! PostgreSQL connection and applies a [`ReloadAdvisory`] to the TSM so the
-//! tile catalog stays in sync with the database schema.
+//! PostgreSQL connection and pushes [`ReloadAdvisory`] values into the shared
+//! advisory channel so the tile catalog stays in sync with the database schema.
 //!
 //! ## What is detected
 //!
@@ -25,12 +25,13 @@
 //!
 //! [`watch_interval_secs`]: crate::config::file::postgres::PostgresConfig::watch_interval_secs
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use super::{ReloadAdvisory, TileSourceManager};
+use super::ReloadAdvisory;
 use crate::config::file::postgres::PostgresConfig;
 use crate::config::primitives::IdResolver;
 
@@ -58,28 +59,29 @@ pub struct PostgresPollSetup {
 /// Runs a background polling loop for a single PostgreSQL connection.
 ///
 /// Call [`start`](Self::start) once per [`PostgresConfig`] that has polling
-/// enabled; the spawned task runs until the process exits.
+/// enabled; the spawned task runs until the advisory channel is closed or the
+/// process exits.
 pub struct PostgresPoller;
 
 impl PostgresPoller {
     /// Spawn a background task that polls the configured connection at the
-    /// given interval.
+    /// given interval and sends [`ReloadAdvisory`] values into `tx`.
     ///
     /// On each poll the config is cloned and fully re-resolved (new connection
     /// pool, fresh table/function discovery).  The resulting source set is
-    /// diffed against the TSM:
+    /// diffed against the locally-tracked state:
     ///
-    /// - **New** sources (not previously known) are applied as
+    /// - **New** sources (not previously known) are sent as
     ///   [`added`](ReloadAdvisory::added).
-    /// - **Existing** sources whose `TileJSON` has changed are applied as
+    /// - **Existing** sources whose `TileJSON` has changed are sent as
     ///   [`changed`](ReloadAdvisory::changed), which invalidates their cached
     ///   tiles.
-    /// - **Missing** sources (dropped from the DB) are applied as
+    /// - **Missing** sources (dropped from the DB) are sent as
     ///   [`removed`](ReloadAdvisory::removed).
     ///
-    /// If nothing changed the TSM is left untouched and no cache entries are
-    /// invalidated.
-    pub fn start(tsm: TileSourceManager, setup: PostgresPollSetup) {
+    /// If nothing changed no advisory is sent and the TSM is left untouched.
+    /// The task exits if `tx` is closed (i.e. the advisory consumer has stopped).
+    pub fn start(tx: mpsc::Sender<ReloadAdvisory>, setup: PostgresPollSetup) {
         let PostgresPollSetup { config, idr, interval } = setup;
 
         tokio::spawn(async move {
@@ -99,6 +101,10 @@ impl PostgresPoller {
             // the first poll populates it, re-upserting sources that are
             // already in the TSM (harmless — just invalidates their caches).
             let mut known_ids: HashSet<String> = HashSet::new();
+
+            // Last-seen serialized TileJSON per source ID.  Used to detect
+            // schema changes without querying the TSM.
+            let mut last_tilejson: HashMap<String, serde_json::Value> = HashMap::new();
 
             loop {
                 tokio::time::sleep(interval).await;
@@ -129,19 +135,23 @@ impl PostgresPoller {
 
                 for source in new_sources {
                     let id = source.get_id().to_string();
+                    let current_tj = serde_json::to_value(source.get_tilejson()).ok();
                     if known_ids.contains(&id) {
                         // Only re-register if the TileJSON metadata changed;
                         // this avoids unnecessary cache invalidation when the
                         // schema is stable.
-                        let tilejson_changed = tsm.get_source(&id).map_or(true, |existing| {
-                            serde_json::to_value(source.get_tilejson()).ok()
-                                != serde_json::to_value(existing.get_tilejson()).ok()
-                        });
+                        let tilejson_changed = last_tilejson.get(&id) != current_tj.as_ref();
                         if tilejson_changed {
+                            if let Some(tj) = current_tj {
+                                last_tilejson.insert(id.clone(), tj);
+                            }
                             changed.push(source);
                         }
                     } else {
                         info!("Postgres poller: new source discovered `{id}` on {conn_id}");
+                        if let Some(tj) = current_tj {
+                            last_tilejson.insert(id.clone(), tj);
+                        }
                         added.push(source);
                     }
                 }
@@ -150,6 +160,7 @@ impl PostgresPoller {
                 for id in &removed {
                     info!("Postgres poller: source removed `{id}` on {conn_id}");
                     known_ids.remove(id);
+                    last_tilejson.remove(id);
                 }
                 for source in &added {
                     known_ids.insert(source.get_id().to_string());
@@ -160,7 +171,10 @@ impl PostgresPoller {
                     continue;
                 }
 
-                tsm.apply_advisory(ReloadAdvisory { added, changed, removed });
+                if tx.send(ReloadAdvisory { added, changed, removed }).await.is_err() {
+                    warn!("Advisory channel closed for {conn_id}; stopping Postgres poller");
+                    break;
+                }
             }
         });
     }

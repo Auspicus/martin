@@ -52,6 +52,14 @@ pub struct ServerState {
     #[cfg(feature = "_tiles")]
     pub tsm: TileSourceManager,
 
+    /// Postgres poll setups deferred to the server for startup.
+    ///
+    /// These are started in `new_server` once the advisory channel is ready,
+    /// rather than here in `Config::resolve` where the channel does not exist
+    /// yet.
+    #[cfg(feature = "postgres")]
+    pub pg_poll_setups: Vec<crate::reload::postgres::PostgresPollSetup>,
+
     #[cfg(feature = "sprites")]
     pub sprites: martin_core::sprites::SpriteSources,
     #[cfg(feature = "sprites")]
@@ -274,15 +282,14 @@ impl Config {
         #[cfg(feature = "_tiles")]
         let tsm = TileSourceManager::from_sources(sources, cache_config.create_tile_cache());
 
-        // Start background poll tasks now that the TSM is ready.
-        #[cfg(feature = "postgres")]
-        for setup in pg_poll_setups {
-            crate::reload::postgres::PostgresPoller::start(tsm.clone(), setup);
-        }
-
         Ok(ServerState {
             #[cfg(feature = "_tiles")]
             tsm,
+
+            // Postgres pollers are started in new_server() once the advisory
+            // channel exists; we just forward the setups here.
+            #[cfg(feature = "postgres")]
+            pg_poll_setups,
 
             #[cfg(feature = "sprites")]
             sprites: self.sprites.resolve()?,

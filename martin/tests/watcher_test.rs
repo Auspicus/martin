@@ -12,14 +12,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use martin::reload::WatchPaths;
+use martin::reload::ReloadAdvisory;
 use martin::reload::TileSourceManager;
+use martin::reload::WatchPaths;
 use martin::reload::mbtiles::MBTilesReloader;
 use martin::reload::watcher::TileFileWatcher;
 use martin_core::tiles::NO_TILE_CACHE;
 use mbtiles::sqlx::{self, Connection as _};
 use mbtiles::Mbtiles;
 use tempfile::tempdir;
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 /// SQL that populates a minimal MVT mbtiles suitable for loading.
@@ -59,19 +61,29 @@ async fn wait_for_watcher_init() {
     sleep(Duration::from_millis(200)).await;
 }
 
+/// Create an advisory channel wired to `tsm` and return the sender half.
+fn make_advisory_tx(tsm: &TileSourceManager) -> mpsc::Sender<ReloadAdvisory> {
+    let (tx, rx) = mpsc::channel(64);
+    tsm.clone().run_advisory_loop(rx);
+    tx
+}
+
 // ---------------------------------------------------------------------------
 // Helper: start watcher for a single tracked file
 // ---------------------------------------------------------------------------
 
 async fn start_file_watcher(
     tsm: &TileSourceManager,
+    tx: mpsc::Sender<ReloadAdvisory>,
     id: &str,
     path: &PathBuf,
 ) {
+    let idr = tsm.id_resolver();
     let mut id_to_path = HashMap::new();
     id_to_path.insert(id.to_string(), path.clone());
     TileFileWatcher::start(
-        tsm.clone(),
+        idr,
+        tx,
         WatchPaths {
             id_to_path,
             watched_dirs: vec![],
@@ -93,7 +105,7 @@ async fn watcher_removes_source_on_file_deletion() {
     // Create a real file on disk and load it.
     create_mbtiles_file(&path, MVT_SQL).await;
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let advisory = MBTilesReloader::load_file(&tsm, path.clone())
+    let advisory = MBTilesReloader::load_file(&tsm.id_resolver(), path.clone())
         .await
         .expect("load_file");
     let id = advisory.added_ids().into_iter().next().expect("added a source");
@@ -103,7 +115,8 @@ async fn watcher_removes_source_on_file_deletion() {
     assert!(tsm.get_source(&id).is_some(), "source should be present before deletion");
 
     // Start the watcher and wait for it to initialise.
-    start_file_watcher(&tsm, &id, &path).await;
+    let tx = make_advisory_tx(&tsm);
+    start_file_watcher(&tsm, tx, &id, &path).await;
     wait_for_watcher_init().await;
 
     // Delete the file.
@@ -130,7 +143,7 @@ async fn watcher_reloads_source_on_file_modification() {
     // Create initial file.
     create_mbtiles_file(&path, MVT_SQL).await;
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let advisory = MBTilesReloader::load_file(&tsm, path.clone())
+    let advisory = MBTilesReloader::load_file(&tsm.id_resolver(), path.clone())
         .await
         .expect("load_file");
     let id = advisory.added_ids().into_iter().next().expect("added a source");
@@ -139,7 +152,8 @@ async fn watcher_reloads_source_on_file_modification() {
     assert!(tsm.get_source(&id).is_some(), "source must exist before reload");
 
     // Start the watcher and let it initialise.
-    start_file_watcher(&tsm, &id, &path).await;
+    let tx = make_advisory_tx(&tsm);
+    start_file_watcher(&tsm, tx, &id, &path).await;
     wait_for_watcher_init().await;
 
     // Modify the file in-place (triggers a Modify event, not Remove).
@@ -162,10 +176,12 @@ async fn watcher_loads_new_file_in_watched_directory() {
     let dir = tempdir().expect("tempdir");
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
+    let tx = make_advisory_tx(&tsm);
 
     // Start the watcher with an empty id_to_path but watching the directory.
     TileFileWatcher::start(
-        tsm.clone(),
+        tsm.id_resolver(),
+        tx,
         WatchPaths {
             id_to_path: HashMap::new(),
             watched_dirs: vec![dir.path().to_path_buf()],

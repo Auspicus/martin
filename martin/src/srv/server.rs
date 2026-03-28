@@ -188,9 +188,18 @@ pub fn new_server(
         &state,
     )?;
 
+    // Create the shared advisory channel.  All reloaders send ReloadAdvisory
+    // values here; the TSM advisory loop applies them to the catalog.
+    #[cfg(any(feature = "_file_watcher", feature = "postgres"))]
+    let (advisory_tx, advisory_rx) =
+        tokio::sync::mpsc::channel::<crate::reload::ReloadAdvisory>(64);
+
+    #[cfg(any(feature = "_file_watcher", feature = "postgres"))]
+    state.tsm.clone().run_advisory_loop(advisory_rx);
+
     #[cfg(feature = "_file_watcher")]
     if let Some(paths) = watch_paths {
-        let tsm_watch = state.tsm.clone();
+        let idr = state.tsm.id_resolver();
         let mut loaders: Vec<std::sync::Arc<dyn crate::reload::TileSourceWatcher>> = vec![];
         #[cfg(feature = "mbtiles")]
         loaders.push(std::sync::Arc::new(
@@ -203,10 +212,18 @@ pub fn new_server(
         #[cfg(feature = "unstable-cog")]
         loaders.push(std::sync::Arc::new(crate::reload::cog::COGReloader));
         tokio::spawn(crate::reload::watcher::TileFileWatcher::start(
-            tsm_watch,
+            idr,
+            advisory_tx.clone(),
             paths,
             loaders,
         ));
+    }
+
+    // Start Postgres pollers (moved here from Config::resolve so the advisory
+    // channel is available).
+    #[cfg(feature = "postgres")]
+    for setup in state.pg_poll_setups {
+        crate::reload::postgres::PostgresPoller::start(advisory_tx.clone(), setup);
     }
 
     let keep_alive = Duration::from_secs(config.keep_alive.unwrap_or(KEEP_ALIVE_DEFAULT));

@@ -2,13 +2,15 @@
 //!
 //! The [`TileSourceManager`] (TSM) is the single point of serialization for
 //! catalog updates. Specialized reloaders (one per source type) discover
-//! changes and push them here; the TSM applies each change atomically so
-//! clients never observe a partial or inconsistent catalog.
+//! changes and push [`ReloadAdvisory`] values into a shared
+//! `tokio::sync::mpsc` channel; the TSM drains that channel and applies each
+//! change atomically so clients never observe a partial or inconsistent
+//! catalog.
 //!
 //! ```text
 //! Main Process
-//! ├── PostgresPoller  ──(poll)──┐
-//! ├── MBTilesReloader   ────────┤──► TileSourceManager ──► Public Catalog
+//! ├── PostgresPoller  ──(mpsc)──┐
+//! ├── MBTilesReloader   ────────┤──► advisory channel ──► TileSourceManager ──► Public Catalog
 //! ├── PMTilesReloader   ────────┤
 //! └── COGReloader       ────────┘
 //! ```
@@ -81,7 +83,7 @@ impl ReloadAdvisory {
 /// A watcher encapsulates format- or backend-specific knowledge (e.g. which
 /// file extension it handles, or how to query a Postgres database for changes)
 /// and produces [`ReloadAdvisory`] values that the generic watcher forwards to
-/// the [`TileSourceManager`].
+/// the advisory channel.
 #[cfg(feature = "_file_watcher")]
 #[async_trait::async_trait]
 pub trait TileSourceWatcher: Send + Sync {
@@ -90,17 +92,21 @@ pub trait TileSourceWatcher: Send + Sync {
 
     /// Open the file at `path` and return a [`ReloadAdvisory`] with the new
     /// source in [`ReloadAdvisory::added`].
+    ///
+    /// `idr` is used to resolve a stable, non-reserved ID for the new source.
     async fn load_file(
         &self,
-        tsm: &TileSourceManager,
+        idr: &IdResolver,
         path: std::path::PathBuf,
     ) -> crate::MartinResult<ReloadAdvisory>;
 
     /// Re-open the file at `path` and return a [`ReloadAdvisory`] with the
     /// refreshed source in [`ReloadAdvisory::changed`].
+    ///
+    /// The caller supplies the existing stable `id` so the same URL remains
+    /// valid after the reload.
     async fn reload_source(
         &self,
-        tsm: &TileSourceManager,
         id: &str,
         path: std::path::PathBuf,
     ) -> crate::MartinResult<ReloadAdvisory>;
@@ -168,6 +174,16 @@ impl TileSourceManager {
         }
     }
 
+    /// Returns a clone of the internal [`IdResolver`].
+    ///
+    /// The resolver can be passed to file-watcher loaders so they can assign
+    /// stable, non-reserved IDs to new sources without holding a reference to
+    /// the full TSM.
+    #[must_use]
+    pub fn id_resolver(&self) -> IdResolver {
+        self.id_resolver.clone()
+    }
+
     /// Resolves a stable, unique, non-reserved ID for a new source.
     ///
     /// Delegates to the internal [`IdResolver`]; see its docs for the
@@ -175,6 +191,21 @@ impl TileSourceManager {
     #[must_use]
     pub fn resolve_id(&self, name: &str, unique_name: String) -> String {
         self.id_resolver.resolve(name, unique_name)
+    }
+
+    /// Spawn a background task that drains `rx` and applies each incoming
+    /// [`ReloadAdvisory`] to this TSM.
+    ///
+    /// Call once at server startup after creating the advisory channel.  The
+    /// task exits automatically when all senders are dropped (i.e. when all
+    /// reloaders shut down).
+    pub fn run_advisory_loop(self, mut rx: tokio::sync::mpsc::Receiver<ReloadAdvisory>) {
+        tokio::spawn(async move {
+            while let Some(advisory) = rx.recv().await {
+                self.apply_advisory(advisory);
+            }
+            debug!("Advisory channel closed; advisory loop exiting.");
+        });
     }
 
     /// Inserts or replaces a source in the registry.

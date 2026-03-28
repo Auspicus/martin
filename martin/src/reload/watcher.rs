@@ -1,8 +1,8 @@
 //! Generic filesystem watcher for file-based tile sources.
 //!
 //! [`TileFileWatcher::start`] spawns a background task that watches registered
-//! tile files and directories for changes, forwarding them to the
-//! [`TileSourceManager`].  Format-specific knowledge lives in the
+//! tile files and directories for changes, sending [`ReloadAdvisory`] values
+//! into the shared advisory channel.  Format-specific knowledge lives in the
 //! [`TileSourceWatcher`](super::TileSourceWatcher) implementations passed to
 //! `start` — the watcher itself is format-agnostic.
 //!
@@ -24,7 +24,8 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use super::{ReloadAdvisory, TileSourceManager, TileSourceWatcher};
+use super::{ReloadAdvisory, TileSourceWatcher};
+use crate::config::primitives::IdResolver;
 
 /// Paths needed to start the tile filesystem watcher.
 pub struct WatchPaths {
@@ -40,16 +41,21 @@ pub struct TileFileWatcher;
 impl TileFileWatcher {
     /// Spawn a background task that reacts to filesystem events.
     ///
+    /// `idr` is used by loaders to assign stable IDs to newly-discovered files.
+    /// `tx` is the shared advisory channel; all reload events are sent here and
+    /// consumed by [`TileSourceManager::run_advisory_loop`](super::TileSourceManager::run_advisory_loop).
+    ///
     /// `loaders` is a list of format-specific handlers; the watcher consults
     /// them (via [`TileSourceWatcher::can_handle`]) to decide whether to act on
     /// a file and which loader to use.
     ///
-    /// - **Modified file** → source is hot-reloaded in the TSM.
-    /// - **Deleted file** → source is removed from the TSM.
+    /// - **Modified file** → source is hot-reloaded via the advisory channel.
+    /// - **Deleted file** → source is removed via the advisory channel.
     /// - **New file** in a watched directory → source is loaded if a loader
     ///   reports it can handle the file.
     pub async fn start(
-        tsm: TileSourceManager,
+        idr: IdResolver,
+        tx: mpsc::Sender<ReloadAdvisory>,
         paths: WatchPaths,
         loaders: Vec<Arc<dyn TileSourceWatcher>>,
     ) {
@@ -73,12 +79,15 @@ impl TileFileWatcher {
             .map(|d| d.canonicalize().unwrap_or_else(|_| d.clone()))
             .collect();
 
-        let (tx, mut rx) = mpsc::channel::<Event>(256);
+        // fs_tx/fs_rx carry raw filesystem events from the notify callback into
+        // the async event loop.  Named distinctly to avoid shadowing the
+        // advisory `tx`.
+        let (fs_tx, mut fs_rx) = mpsc::channel::<Event>(256);
 
         let mut watcher = match RecommendedWatcher::new(
             move |result: notify::Result<Event>| {
                 if let Ok(event) = result {
-                    let _ = tx.blocking_send(event);
+                    let _ = fs_tx.blocking_send(event);
                 }
             },
             Config::default(),
@@ -112,14 +121,15 @@ impl TileFileWatcher {
         tokio::spawn(async move {
             // Keep the watcher alive for the lifetime of this task.
             let _watcher = watcher;
-            while let Some(event) = rx.recv().await {
+            while let Some(event) = fs_rx.recv().await {
                 for path in &event.paths {
                     let canon = path.canonicalize().unwrap_or_else(|_| path.clone());
                     handle_event(
                         &event.kind,
                         path,
                         &canon,
-                        &tsm,
+                        &idr,
+                        &tx,
                         &path_to_id,
                         &watched_dirs,
                         &loaders,
@@ -131,11 +141,20 @@ impl TileFileWatcher {
     }
 }
 
+/// Send an advisory into the channel, logging a warning if the channel is closed.
+async fn send_advisory(tx: &mpsc::Sender<ReloadAdvisory>, advisory: ReloadAdvisory) {
+    if tx.send(advisory).await.is_err() {
+        warn!("Advisory channel closed; dropping reload advisory");
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_event(
     kind: &EventKind,
     path: &PathBuf,
     canon: &PathBuf,
-    tsm: &TileSourceManager,
+    idr: &IdResolver,
+    tx: &mpsc::Sender<ReloadAdvisory>,
     path_to_id: &DashMap<PathBuf, String>,
     watched_dirs: &[PathBuf],
     loaders: &[Arc<dyn TileSourceWatcher>],
@@ -148,16 +167,21 @@ async fn handle_event(
                     // before (or instead of) Remove — treat it as a removal.
                     path_to_id.remove(canon);
                     info!("Removing source `{id}` (file deleted: {})", path.display());
-                    tsm.apply_advisory(ReloadAdvisory {
+                    send_advisory(tx, ReloadAdvisory {
                         added: vec![],
                         changed: vec![],
                         removed: vec![id],
-                    });
+                    }).await;
                 } else if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
                     info!("Reloading source `{id}` (file changed: {})", canon.display());
-                    match loader.reload_source(tsm, &id, path.clone()).await {
-                        Ok(advisory) => tsm.apply_advisory(advisory),
-                        Err(e) => warn!("Reload of `{id}` failed: {e}"),
+                    // Convert Result → Option before the next await so the
+                    // non-Send MartinError is not held across the await point.
+                    let advisory = match loader.reload_source(&id, path.clone()).await {
+                        Ok(a) => Some(a),
+                        Err(e) => { warn!("Reload of `{id}` failed: {e}"); None }
+                    };
+                    if let Some(advisory) = advisory {
+                        send_advisory(tx, advisory).await;
                     }
                 }
             }
@@ -174,25 +198,29 @@ async fn handle_event(
                     "Removing source `{id}` (file deleted: {})",
                     path.display()
                 );
-                tsm.apply_advisory(ReloadAdvisory {
+                send_advisory(tx, ReloadAdvisory {
                     added: vec![],
                     changed: vec![],
                     removed: vec![id],
-                });
+                }).await;
             }
         }
         EventKind::Create(_) => {
             // If the created path is a tracked file, reload it in place.
-            if let Some(id) = path_to_id.get(canon).map(|r| r.clone()) {
-                if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
-                    info!(
-                        "Reloading source `{id}` (file replaced: {})",
-                        canon.display()
-                    );
-                    match loader.reload_source(tsm, &id, path.clone()).await {
-                        Ok(advisory) => tsm.apply_advisory(advisory),
-                        Err(e) => warn!("Reload of `{id}` failed: {e}"),
-                    }
+            if let (Some(id), Some(loader)) = (
+                path_to_id.get(canon).map(|r| r.clone()),
+                loaders.iter().find(|l| l.can_handle(path)),
+            ) {
+                info!(
+                    "Reloading source `{id}` (file replaced: {})",
+                    canon.display()
+                );
+                let advisory = match loader.reload_source(&id, path.clone()).await {
+                    Ok(a) => Some(a),
+                    Err(e) => { warn!("Reload of `{id}` failed: {e}"); None }
+                };
+                if let Some(advisory) = advisory {
+                    send_advisory(tx, advisory).await;
                 }
             }
             // New files are loaded on Close(Write) once fully written.
@@ -207,20 +235,17 @@ async fn handle_event(
             let in_watched = watched_dirs
                 .iter()
                 .any(|dir| canon.parent().is_some_and(|p| p == dir));
-            if in_watched {
-                if let Some(loader) = loaders.iter().find(|l| l.can_handle(path)) {
-                    info!("Loading new source from {}", path.display());
-                    match loader.load_file(tsm, path.clone()).await {
-                        Ok(advisory) => {
-                            let added_ids = advisory.added_ids();
-                            tsm.apply_advisory(advisory);
-                            for id in added_ids {
-                                path_to_id.insert(canon.clone(), id);
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to load {}: {e}", path.display());
-                        }
+            if let Some(loader) = in_watched.then(|| loaders.iter().find(|l| l.can_handle(path))).flatten() {
+                info!("Loading new source from {}", path.display());
+                let result = match loader.load_file(idr, path.clone()).await {
+                    Ok(a) => Some(a),
+                    Err(e) => { warn!("Failed to load {}: {e}", path.display()); None }
+                };
+                if let Some(advisory) = result {
+                    let added_ids = advisory.added_ids();
+                    send_advisory(tx, advisory).await;
+                    for id in added_ids {
+                        path_to_id.insert(canon.clone(), id);
                     }
                 }
             }

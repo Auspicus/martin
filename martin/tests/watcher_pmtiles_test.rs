@@ -12,12 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use martin::reload::ReloadAdvisory;
 use martin::reload::TileSourceManager;
 use martin::reload::WatchPaths;
 use martin::reload::pmtiles::PMTilesReloader;
 use martin::reload::watcher::TileFileWatcher;
 use martin_core::tiles::NO_TILE_CACHE;
 use tempfile::tempdir;
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 /// Returns the path to the Stamen Toner PMTiles fixture file.
@@ -36,12 +38,26 @@ async fn wait_for_watcher_init() {
     sleep(Duration::from_millis(200)).await;
 }
 
+/// Create an advisory channel wired to `tsm` and return the sender half.
+fn make_advisory_tx(tsm: &TileSourceManager) -> mpsc::Sender<ReloadAdvisory> {
+    let (tx, rx) = mpsc::channel(64);
+    tsm.clone().run_advisory_loop(rx);
+    tx
+}
+
 /// Start a watcher that tracks a single file already loaded in the TSM.
-async fn start_file_watcher(tsm: &TileSourceManager, id: &str, path: &PathBuf) {
+async fn start_file_watcher(
+    tsm: &TileSourceManager,
+    tx: mpsc::Sender<ReloadAdvisory>,
+    id: &str,
+    path: &PathBuf,
+) {
+    let idr = tsm.id_resolver();
     let mut id_to_path = HashMap::new();
     id_to_path.insert(id.to_string(), path.clone());
     TileFileWatcher::start(
-        tsm.clone(),
+        idr,
+        tx,
         WatchPaths {
             id_to_path,
             watched_dirs: vec![],
@@ -63,7 +79,7 @@ async fn pmtiles_watcher_removes_source_on_file_deletion() {
     std::fs::copy(pmtiles_fixture(), &path).expect("copy fixture");
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let advisory = PMTilesReloader::load_file(&tsm, path.clone())
+    let advisory = PMTilesReloader::load_file(&tsm.id_resolver(), path.clone())
         .await
         .expect("load_file");
     let id = advisory.added_ids().into_iter().next().expect("added a source");
@@ -74,7 +90,8 @@ async fn pmtiles_watcher_removes_source_on_file_deletion() {
         "source should be present before deletion"
     );
 
-    start_file_watcher(&tsm, &id, &path).await;
+    let tx = make_advisory_tx(&tsm);
+    start_file_watcher(&tsm, tx, &id, &path).await;
     wait_for_watcher_init().await;
 
     std::fs::remove_file(&path).expect("remove file");
@@ -98,7 +115,7 @@ async fn pmtiles_watcher_reloads_source_on_file_modification() {
     std::fs::copy(pmtiles_fixture(), &path).expect("copy fixture");
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
-    let advisory = PMTilesReloader::load_file(&tsm, path.clone())
+    let advisory = PMTilesReloader::load_file(&tsm.id_resolver(), path.clone())
         .await
         .expect("load_file");
     let id = advisory.added_ids().into_iter().next().expect("added a source");
@@ -106,7 +123,8 @@ async fn pmtiles_watcher_reloads_source_on_file_modification() {
 
     assert!(tsm.get_source(&id).is_some(), "source must exist before reload");
 
-    start_file_watcher(&tsm, &id, &path).await;
+    let tx = make_advisory_tx(&tsm);
+    start_file_watcher(&tsm, tx, &id, &path).await;
     wait_for_watcher_init().await;
 
     // Overwrite the file in-place with a valid copy of the same fixture.
@@ -129,9 +147,11 @@ async fn pmtiles_watcher_loads_new_file_in_watched_directory() {
     let dir = tempdir().expect("tempdir");
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
+    let tx = make_advisory_tx(&tsm);
 
     TileFileWatcher::start(
-        tsm.clone(),
+        tsm.id_resolver(),
+        tx,
         WatchPaths {
             id_to_path: HashMap::new(),
             watched_dirs: vec![dir.path().to_path_buf()],

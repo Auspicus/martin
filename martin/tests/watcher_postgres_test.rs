@@ -20,11 +20,13 @@ use martin::config::file::postgres::{
 use martin::config::primitives::IdResolver;
 use martin::config::primitives::OptBoolObj;
 use martin::config::primitives::OptOneMany;
-use martin::reload::postgres::{PostgresPollSetup, PostgresPoller};
+use martin::reload::ReloadAdvisory;
 use martin::reload::TileSourceManager;
+use martin::reload::postgres::{PostgresPollSetup, PostgresPoller};
 use martin::srv::RESERVED_KEYWORDS;
 use martin_core::tiles::NO_TILE_CACHE;
 use martin_core::tiles::postgres::PostgresPool;
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 /// Schema used exclusively by these tests. Isolated from the fixture data.
@@ -71,6 +73,13 @@ fn watcher_config() -> PostgresConfig {
     }
 }
 
+/// Create an advisory channel wired to `tsm` and return the sender half.
+fn make_advisory_tx(tsm: &TileSourceManager) -> mpsc::Sender<ReloadAdvisory> {
+    let (tx, rx) = mpsc::channel(64);
+    tsm.clone().run_advisory_loop(rx);
+    tx
+}
+
 // ---------------------------------------------------------------------------
 // Test: new table is discovered on the next poll
 // ---------------------------------------------------------------------------
@@ -86,9 +95,10 @@ async fn postgres_poller_discovers_new_table() {
     let config = watcher_config();
     let idr = IdResolver::new(RESERVED_KEYWORDS);
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
+    let tx = make_advisory_tx(&tsm);
 
     PostgresPoller::start(
-        tsm.clone(),
+        tx,
         PostgresPollSetup { config, idr, interval: Duration::from_secs(1) },
     );
 
@@ -144,9 +154,10 @@ async fn postgres_poller_removes_dropped_table() {
     let config = watcher_config();
     let idr = IdResolver::new(RESERVED_KEYWORDS);
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
+    let tx = make_advisory_tx(&tsm);
 
     PostgresPoller::start(
-        tsm.clone(),
+        tx,
         PostgresPollSetup { config, idr, interval: Duration::from_secs(1) },
     );
 

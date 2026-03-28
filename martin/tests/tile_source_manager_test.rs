@@ -17,7 +17,7 @@ const MVT_MODIFIED_SCRIPT: &str =
 
 /// Load a file, apply the advisory, and return the assigned source ID.
 async fn load_file(tsm: &TileSourceManager, path: std::path::PathBuf) -> String {
-    let advisory = MBTilesReloader::load_file(tsm, path)
+    let advisory = MBTilesReloader::load_file(&tsm.id_resolver(), path)
         .await
         .expect("load_file should succeed");
     let id = advisory
@@ -162,7 +162,7 @@ async fn reload_source_replaces_existing() {
     let (_mbt2, _conn2, path2) =
         temp_named_mbtiles("tsm_reload_v2", MVT_MODIFIED_SCRIPT).await;
 
-    let advisory = MBTilesReloader::reload_source(&tsm, &id, path2)
+    let advisory = MBTilesReloader::reload_source(&id, path2)
         .await
         .expect("reload_source should succeed");
     tsm.apply_advisory(advisory);

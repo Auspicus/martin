@@ -17,8 +17,8 @@ use serde::Deserialize;
 use tracing::warn;
 
 use crate::config::args::PreferredEncoding;
-use crate::config::file::srv::SrvConfig;
 use crate::config::file::reload::TileSourceManager;
+use crate::config::file::srv::SrvConfig;
 use crate::srv::server::{DebouncedWarning, map_internal_error};
 use martin_tile_utils::{decode_zlib, decode_zstd, encode_zlib, encode_zstd};
 
@@ -534,17 +534,8 @@ mod tests {
             data: vec![1_u8, 2, 3],
         }));
 
-        let src = DynTileSource::new(
-            &tsm,
-            source_id,
-            None,
-            "",
-            None,
-            if_none_match,
-            None,
-            None,
-        )
-        .unwrap();
+        let src =
+            DynTileSource::new(&tsm, source_id, None, "", None, if_none_match, None, None).unwrap();
         let resp = &src
             .get_http_response(TileCoord { z: 0, x: 0, y: 0 })
             .await
@@ -644,17 +635,8 @@ mod tests {
         tsm.upsert_source(Box::new(src2));
 
         let accept_enc = accept.map(|s| AcceptEncoding(vec![s.parse().unwrap()]));
-        let src = DynTileSource::new(
-            &tsm,
-            "src1,src2",
-            None,
-            "",
-            accept_enc,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let src =
+            DynTileSource::new(&tsm, "src1,src2", None, "", accept_enc, None, None, None).unwrap();
 
         let tile = src
             .get_tile_content(TileCoord { z: 0, x: 0, y: 0 })

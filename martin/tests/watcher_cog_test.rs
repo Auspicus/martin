@@ -9,9 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use martin::config::file::tiles::reload::cog::COGReloader;
 use martin::config::file::reload::ReloadAdvisory;
 use martin::config::file::reload::TileSourceManager;
+use martin::config::file::tiles::reload::cog::COGReloader;
 use martin_core::tiles::NO_TILE_CACHE;
 use tempfile::tempdir;
 use tokio::sync::mpsc;
@@ -19,8 +19,7 @@ use tokio::time::sleep;
 
 /// Returns the path to a small COG fixture file.
 fn cog_fixture() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../tests/fixtures/cog/usda_naip_128_none_z2.tif")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/cog/usda_naip_128_none_z2.tif")
 }
 
 /// Give inotify / the tokio task a moment to process the event.
@@ -51,11 +50,7 @@ async fn cog_watcher_loads_new_file_in_watched_directory() {
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let tx = make_advisory_tx(&tsm);
 
-    COGReloader::start(
-        tsm.id_resolver(),
-        tx,
-        vec![dir.path().to_path_buf()],
-    );
+    COGReloader::start(tsm.id_resolver(), tx, vec![dir.path().to_path_buf()]);
     wait_for_watcher_init().await;
 
     let path = dir.path().join("new_source.tif");
@@ -83,11 +78,7 @@ async fn cog_watcher_removes_source_on_file_deletion() {
     let tx = make_advisory_tx(&tsm);
 
     // Start the watcher watching the directory.
-    COGReloader::start(
-        tsm.id_resolver(),
-        tx,
-        vec![dir.path().to_path_buf()],
-    );
+    COGReloader::start(tsm.id_resolver(), tx, vec![dir.path().to_path_buf()]);
     wait_for_watcher_init().await;
 
     // Create the file — watcher discovers it and loads it into the TSM.
@@ -96,7 +87,11 @@ async fn cog_watcher_removes_source_on_file_deletion() {
     wait_for_event().await;
 
     let ids = tsm.source_ids();
-    assert_eq!(ids.len(), 1, "source should be present after discovery; found: {ids:?}");
+    assert_eq!(
+        ids.len(),
+        1,
+        "source should be present after discovery; found: {ids:?}"
+    );
     let id = ids.into_iter().next().unwrap();
 
     // Delete the file — watcher should remove it from the TSM.

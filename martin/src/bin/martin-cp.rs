@@ -596,46 +596,55 @@ mod tests {
 
     #[fixture]
     fn many_sources() -> TileSourceManager {
-        TileSourceManager::from_sources(vec![
-            Box::new(MockSource {
-                id: "test_source",
-                tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-110.0,20.0,-120.0,80.0").unwrap() },
-                data: Vec::default(),
-            }),
-            Box::new(MockSource {
-                id: "test_source2",
-                tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-130.0,40.0,-170.0,10.0").unwrap() },
-                data: Vec::default(),
-            }),
-            Box::new(MockSource {
-                id: "unrequested_source",
-                tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-150.0,40.0,-120.0,10.0").unwrap() },
-                data: Vec::default(),
-            }),
-            Box::new(MockSource {
-                id: "unbounded_source",
-                tj: tilejson! { tiles: vec![] },
-                data: Vec::default(),
-            }),
-        ], NO_TILE_CACHE)
+        TileSourceManager::from_sources(
+            vec![
+                Box::new(MockSource {
+                    id: "test_source",
+                    tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-110.0,20.0,-120.0,80.0").unwrap() },
+                    data: Vec::default(),
+                }),
+                Box::new(MockSource {
+                    id: "test_source2",
+                    tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-130.0,40.0,-170.0,10.0").unwrap() },
+                    data: Vec::default(),
+                }),
+                Box::new(MockSource {
+                    id: "unrequested_source",
+                    tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-150.0,40.0,-120.0,10.0").unwrap() },
+                    data: Vec::default(),
+                }),
+                Box::new(MockSource {
+                    id: "unbounded_source",
+                    tj: tilejson! { tiles: vec![] },
+                    data: Vec::default(),
+                }),
+            ],
+            NO_TILE_CACHE,
+        )
     }
 
     #[fixture]
     fn one_source() -> TileSourceManager {
-        TileSourceManager::from_sources(vec![Box::new(MockSource {
-            id: "test_source",
-            tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-120.0,30.0,-110.0,40.0").unwrap() },
-            data: Vec::default(),
-        })], NO_TILE_CACHE)
+        TileSourceManager::from_sources(
+            vec![Box::new(MockSource {
+                id: "test_source",
+                tj: tilejson! { tiles: vec![], bounds: Bounds::from_str("-120.0,30.0,-110.0,40.0").unwrap() },
+                data: Vec::default(),
+            })],
+            NO_TILE_CACHE,
+        )
     }
 
     #[fixture]
     fn source_wo_bounds() -> TileSourceManager {
-        TileSourceManager::from_sources(vec![Box::new(MockSource {
-            id: "test_source",
-            tj: tilejson! { tiles: vec![] },
-            data: Vec::default(),
-        })], NO_TILE_CACHE)
+        TileSourceManager::from_sources(
+            vec![Box::new(MockSource {
+                id: "test_source",
+                tj: tilejson! { tiles: vec![] },
+                data: Vec::default(),
+            })],
+            NO_TILE_CACHE,
+        )
     }
 
     #[rstest]

@@ -4,11 +4,11 @@ use std::io::prelude::*;
 use std::path::Path;
 use std::sync::LazyLock;
 
+#[cfg(feature = "_tiles")]
+use crate::config::file::reload::TileSourceManager;
 use clap::ValueEnum;
 #[cfg(feature = "_tiles")]
 use futures::future::{BoxFuture, try_join_all};
-#[cfg(feature = "_tiles")]
-use crate::config::file::reload::TileSourceManager;
 #[cfg(feature = "pmtiles")]
 use martin_core::tiles::pmtiles::PmtCache;
 use serde::{Deserialize, Serialize};

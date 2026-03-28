@@ -127,7 +127,8 @@ async fn process_error_tile(sources: &TileSourceManager) {
 }
 
 fn bench_null_source(c: &mut Criterion) {
-    let sources = TileSourceManager::from_sources(vec![Box::new(sources::NullSource::new())], NO_TILE_CACHE);
+    let sources =
+        TileSourceManager::from_sources(vec![Box::new(sources::NullSource::new())], NO_TILE_CACHE);
     c.bench_function("get_table_source_tile", |b| {
         b.to_async(FuturesExecutor)
             .iter(|| process_null_tile(&sources));
@@ -141,7 +142,8 @@ criterion_group! {
 }
 
 fn bench_error_source(c: &mut Criterion) {
-    let sources = TileSourceManager::from_sources(vec![Box::new(sources::ErrorSource::new())], NO_TILE_CACHE);
+    let sources =
+        TileSourceManager::from_sources(vec![Box::new(sources::ErrorSource::new())], NO_TILE_CACHE);
     c.bench_function("get_table_source_error", |b| {
         b.to_async(FuturesExecutor)
             .iter(|| process_error_tile(&sources));

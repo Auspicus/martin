@@ -9,12 +9,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use martin::config::file::tiles::reload::mbtiles::MBTilesReloader;
 use martin::config::file::reload::ReloadAdvisory;
 use martin::config::file::reload::TileSourceManager;
+use martin::config::file::tiles::reload::mbtiles::MBTilesReloader;
 use martin_core::tiles::NO_TILE_CACHE;
-use mbtiles::sqlx::{self, Connection as _};
 use mbtiles::Mbtiles;
+use mbtiles::sqlx::{self, Connection as _};
 use tempfile::tempdir;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -26,7 +26,10 @@ const MVT_SQL: &str = include_str!("../../tests/fixtures/mbtiles/world_cities.sq
 async fn create_mbtiles_file(path: &PathBuf, sql: &str) {
     let mbt = Mbtiles::new(path).expect("create Mbtiles handle");
     let mut conn = mbt.open_or_new().await.expect("open_or_new");
-    sqlx::raw_sql(sql).execute(&mut conn).await.expect("execute sql");
+    sqlx::raw_sql(sql)
+        .execute(&mut conn)
+        .await
+        .expect("execute sql");
     conn.close().await.expect("close connection");
     // Connection dropped here — SQLite flushes WAL to the main file.
 }
@@ -59,11 +62,7 @@ async fn watcher_loads_new_file_in_watched_directory() {
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let tx = make_advisory_tx(&tsm);
 
-    MBTilesReloader::start(
-        tsm.id_resolver(),
-        tx,
-        vec![dir.path().to_path_buf()],
-    );
+    MBTilesReloader::start(tsm.id_resolver(), tx, vec![dir.path().to_path_buf()]);
     wait_for_watcher_init().await;
 
     let path = dir.path().join("new_source.mbtiles");
@@ -91,11 +90,7 @@ async fn watcher_removes_source_on_file_deletion() {
     let tx = make_advisory_tx(&tsm);
 
     // Start the watcher watching the directory.
-    MBTilesReloader::start(
-        tsm.id_resolver(),
-        tx,
-        vec![dir.path().to_path_buf()],
-    );
+    MBTilesReloader::start(tsm.id_resolver(), tx, vec![dir.path().to_path_buf()]);
     wait_for_watcher_init().await;
 
     // Create the file — watcher discovers it and loads it into the TSM.
@@ -104,7 +99,11 @@ async fn watcher_removes_source_on_file_deletion() {
     wait_for_event().await;
 
     let ids = tsm.source_ids();
-    assert_eq!(ids.len(), 1, "source should be present after discovery; found: {ids:?}");
+    assert_eq!(
+        ids.len(),
+        1,
+        "source should be present after discovery; found: {ids:?}"
+    );
     let id = ids.into_iter().next().unwrap();
 
     // Delete the file — watcher should remove it from the TSM.

@@ -229,7 +229,9 @@ impl TileSourceManager {
     /// Returns `true` if any source benefits from concurrent scraping by martin-cp.
     #[must_use]
     pub fn benefits_from_concurrent_scraping(&self) -> bool {
-        self.sources.iter().any(|s| s.benefits_from_concurrent_scraping())
+        self.sources
+            .iter()
+            .any(|s| s.benefits_from_concurrent_scraping())
     }
 
     /// Resolves one or more comma-separated source IDs for a tile request.
@@ -278,8 +280,6 @@ impl TileSourceManager {
         Ok((sources, use_url_query, info.unwrap()))
     }
 }
-
-pub mod watcher;
 
 #[cfg(feature = "postgres")]
 pub mod postgres;

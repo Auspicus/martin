@@ -12,8 +12,8 @@ use serde::Deserialize;
 use tilejson::{TileJSON, tilejson};
 use url::form_urlencoded;
 
-use crate::config::file::srv::SrvConfig;
 use crate::config::file::reload::TileSourceManager;
+use crate::config::file::srv::SrvConfig;
 
 #[derive(Deserialize)]
 pub struct SourceIDsRequest {

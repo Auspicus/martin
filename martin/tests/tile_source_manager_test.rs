@@ -1,9 +1,9 @@
 #![cfg(feature = "mbtiles")]
 
-use martin::config::file::tiles::reload::mbtiles::MBTilesReloader;
 use martin::config::file::reload::{ReloadAdvisory, TileSourceManager};
-use martin_core::tiles::mbtiles::MbtSource;
+use martin::config::file::tiles::reload::mbtiles::MBTilesReloader;
 use martin_core::tiles::NO_TILE_CACHE;
+use martin_core::tiles::mbtiles::MbtSource;
 use martin_tile_utils::{Format, TileCoord};
 use mbtiles::temp_named_mbtiles;
 
@@ -36,23 +36,22 @@ async fn load_file(tsm: &TileSourceManager, path: std::path::PathBuf) -> String 
 
 #[tokio::test]
 async fn load_single_source_is_accessible() {
-    let (_mbt, _conn, path) =
-        temp_named_mbtiles("tsm_single", MVT_SCRIPT).await;
+    let (_mbt, _conn, path) = temp_named_mbtiles("tsm_single", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id = load_file(&tsm, path).await;
 
     assert!(!id.is_empty(), "assigned ID should not be empty");
-    let source = tsm.get_source(&id).expect("source should be findable by its ID");
+    let source = tsm
+        .get_source(&id)
+        .expect("source should be findable by its ID");
     assert_eq!(source.get_id(), id);
 }
 
 #[tokio::test]
 async fn load_multiple_sources_all_accessible() {
-    let (_mbt1, _conn1, path1) =
-        temp_named_mbtiles("tsm_multi_1", MVT_SCRIPT).await;
-    let (_mbt2, _conn2, path2) =
-        temp_named_mbtiles("tsm_multi_2", PNG_SCRIPT).await;
+    let (_mbt1, _conn1, path1) = temp_named_mbtiles("tsm_multi_1", MVT_SCRIPT).await;
+    let (_mbt2, _conn2, path2) = temp_named_mbtiles("tsm_multi_2", PNG_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let ids = MBTilesReloader::load_files(&tsm, vec![path1, path2])
@@ -70,10 +69,8 @@ async fn load_multiple_sources_all_accessible() {
 
 #[tokio::test]
 async fn source_ids_reflects_all_loaded_sources() {
-    let (_mbt1, _conn1, path1) =
-        temp_named_mbtiles("tsm_ids_1", MVT_SCRIPT).await;
-    let (_mbt2, _conn2, path2) =
-        temp_named_mbtiles("tsm_ids_2", PNG_SCRIPT).await;
+    let (_mbt1, _conn1, path1) = temp_named_mbtiles("tsm_ids_1", MVT_SCRIPT).await;
+    let (_mbt2, _conn2, path2) = temp_named_mbtiles("tsm_ids_2", PNG_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id1 = load_file(&tsm, path1).await;
@@ -92,20 +89,21 @@ async fn source_ids_reflects_all_loaded_sources() {
 
 #[tokio::test]
 async fn catalog_contains_all_loaded_sources() {
-    let (_mbt, _conn, path) =
-        temp_named_mbtiles("tsm_catalog", MVT_SCRIPT).await;
+    let (_mbt, _conn, path) = temp_named_mbtiles("tsm_catalog", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id = load_file(&tsm, path).await;
 
     let catalog = tsm.get_catalog();
-    assert!(catalog.contains_key(&id), "catalog should contain the loaded source");
+    assert!(
+        catalog.contains_key(&id),
+        "catalog should contain the loaded source"
+    );
 }
 
 #[tokio::test]
 async fn catalog_entry_has_correct_content_type_for_mvt() {
-    let (_mbt, _conn, path) =
-        temp_named_mbtiles("tsm_catalog_mvt", MVT_SCRIPT).await;
+    let (_mbt, _conn, path) = temp_named_mbtiles("tsm_catalog_mvt", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id = load_file(&tsm, path).await;
@@ -125,15 +123,20 @@ async fn catalog_entry_has_correct_content_type_for_mvt() {
 
 #[tokio::test]
 async fn remove_source_makes_it_inaccessible() {
-    let (_mbt, _conn, path) =
-        temp_named_mbtiles("tsm_remove", MVT_SCRIPT).await;
+    let (_mbt, _conn, path) = temp_named_mbtiles("tsm_remove", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id = load_file(&tsm, path).await;
 
-    assert!(tsm.get_source(&id).is_some(), "source should exist before removal");
+    assert!(
+        tsm.get_source(&id).is_some(),
+        "source should exist before removal"
+    );
     let removed = tsm.remove_source(&id);
-    assert!(removed, "remove_source should return true for existing source");
+    assert!(
+        removed,
+        "remove_source should return true for existing source"
+    );
     assert!(
         tsm.get_source(&id).is_none(),
         "source should be gone after removal"
@@ -153,15 +156,13 @@ async fn remove_nonexistent_source_returns_false() {
 #[tokio::test]
 async fn reload_source_replaces_existing() {
     // Load initial version.
-    let (_mbt1, _conn1, path1) =
-        temp_named_mbtiles("tsm_reload_v1", MVT_SCRIPT).await;
+    let (_mbt1, _conn1, path1) = temp_named_mbtiles("tsm_reload_v1", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id = load_file(&tsm, path1).await;
 
     // "Reload" using a modified version of the same data (different in-memory db).
-    let (_mbt2, _conn2, path2) =
-        temp_named_mbtiles("tsm_reload_v2", MVT_MODIFIED_SCRIPT).await;
+    let (_mbt2, _conn2, path2) = temp_named_mbtiles("tsm_reload_v2", MVT_MODIFIED_SCRIPT).await;
 
     // Build a "changed" advisory directly: open the new file under the same ID.
     let source = MbtSource::new(id.clone(), path2)
@@ -174,8 +175,14 @@ async fn reload_source_replaces_existing() {
     tsm.apply_advisory(advisory);
 
     // The source should still be accessible under the same ID.
-    let source = tsm.get_source(&id).expect("source should still exist after reload");
-    assert_eq!(source.get_id(), id, "ID should remain stable across reloads");
+    let source = tsm
+        .get_source(&id)
+        .expect("source should still exist after reload");
+    assert_eq!(
+        source.get_id(),
+        id,
+        "ID should remain stable across reloads"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -184,8 +191,7 @@ async fn reload_source_replaces_existing() {
 
 #[tokio::test]
 async fn retrieve_tile_through_tsm() {
-    let (_mbt, _conn, path) =
-        temp_named_mbtiles("tsm_tile_retrieval", MVT_SCRIPT).await;
+    let (_mbt, _conn, path) = temp_named_mbtiles("tsm_tile_retrieval", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id = load_file(&tsm, path).await;
@@ -207,10 +213,8 @@ async fn retrieve_tile_through_tsm() {
 async fn same_stem_files_get_unique_ids() {
     // Two different in-memory databases that would produce the same file-stem
     // based name. The TSM should disambiguate them.
-    let (_mbt1, _conn1, path1) =
-        temp_named_mbtiles("tsm_dedup_a", MVT_SCRIPT).await;
-    let (_mbt2, _conn2, path2) =
-        temp_named_mbtiles("tsm_dedup_b", MVT_SCRIPT).await;
+    let (_mbt1, _conn1, path1) = temp_named_mbtiles("tsm_dedup_a", MVT_SCRIPT).await;
+    let (_mbt2, _conn2, path2) = temp_named_mbtiles("tsm_dedup_b", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id1 = load_file(&tsm, path1).await;
@@ -227,8 +231,7 @@ async fn same_stem_files_get_unique_ids() {
 
 #[tokio::test]
 async fn get_source_actix_returns_source() {
-    let (_mbt, _conn, path) =
-        temp_named_mbtiles("tsm_actix_get", MVT_SCRIPT).await;
+    let (_mbt, _conn, path) = temp_named_mbtiles("tsm_actix_get", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id = load_file(&tsm, path).await;
@@ -248,8 +251,7 @@ async fn get_source_actix_returns_404_for_unknown_id() {
 
 #[tokio::test]
 async fn get_sources_resolves_single_source() {
-    let (_mbt, _conn, path) =
-        temp_named_mbtiles("tsm_get_sources", MVT_SCRIPT).await;
+    let (_mbt, _conn, path) = temp_named_mbtiles("tsm_get_sources", MVT_SCRIPT).await;
 
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let id = load_file(&tsm, path).await;

@@ -16,9 +16,9 @@ use tracing_actix_web::TracingLogger;
 use crate::config::args::WebUiMode;
 #[cfg(feature = "_catalog")]
 use crate::config::file::ServerState;
-use crate::config::file::srv::{KEEP_ALIVE_DEFAULT, LISTEN_ADDRESSES_DEFAULT, SrvConfig};
 #[cfg(feature = "_file_watcher")]
 use crate::config::file::reload::WatchPaths;
+use crate::config::file::srv::{KEEP_ALIVE_DEFAULT, LISTEN_ADDRESSES_DEFAULT, SrvConfig};
 use crate::srv::admin::Catalog;
 use crate::{MartinError, MartinResult};
 

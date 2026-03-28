@@ -84,7 +84,11 @@ impl PostgresPoller {
     /// If nothing changed no advisory is sent and the TSM is left untouched.
     /// The task exits if pool creation fails at startup or if `tx` is closed.
     pub fn start(tx: mpsc::Sender<ReloadAdvisory>, setup: PostgresPollSetup) {
-        let PostgresPollSetup { config, idr, interval } = setup;
+        let PostgresPollSetup {
+            config,
+            idr,
+            interval,
+        } = setup;
 
         tokio::spawn(async move {
             let conn_id = config
@@ -130,10 +134,7 @@ impl PostgresPoller {
 
                 debug!("Polling Postgres sources for {conn_id}");
 
-                let new_sources = match config
-                    .discover_with_pool(pool.clone(), idr.clone())
-                    .await
-                {
+                let new_sources = match config.discover_with_pool(pool.clone(), idr.clone()).await {
                     Ok(sources) => sources,
                     Err(e) => {
                         warn!("Postgres poll failed for {conn_id}: {e}");
@@ -192,7 +193,15 @@ impl PostgresPoller {
                     continue;
                 }
 
-                if tx.send(ReloadAdvisory { added, changed, removed }).await.is_err() {
+                if tx
+                    .send(ReloadAdvisory {
+                        added,
+                        changed,
+                        removed,
+                    })
+                    .await
+                    .is_err()
+                {
                     warn!("Advisory channel closed for {conn_id}; stopping Postgres poller");
                     break;
                 }

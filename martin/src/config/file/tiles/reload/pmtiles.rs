@@ -21,8 +21,13 @@ use url::Url;
 
 use crate::MartinResult;
 use crate::config::file::ConfigFileError;
-use crate::config::primitives::IdResolver;
 use crate::config::file::reload::{ReloadAdvisory, TileSourceManager};
+use crate::config::primitives::IdResolver;
+
+use notify::Config;
+use notify::EventKind;
+use notify::{Event, RecommendedWatcher, Watcher};
+use tracing::{info, warn};
 
 /// Loads and reloads PMTiles tile sources.
 pub struct PMTilesReloader;
@@ -45,27 +50,48 @@ impl PMTilesReloader {
         tx: tokio::sync::mpsc::Sender<ReloadAdvisory>,
         watched_dirs: Vec<PathBuf>,
     ) {
-        use dashmap::DashMap;
-        use tracing::{info, warn};
+        let (fs_tx, mut fs_rx) = tokio::sync::mpsc::channel::<Event>(256);
 
-        use super::watcher::{FileChange, TileFileWatcher};
+        let mut watcher = match RecommendedWatcher::new(
+            move |result: notify::Result<Event>| {
+                if let Ok(event) = result {
+                    let _ = fs_tx.blocking_send(event);
+                }
+            },
+            Config::default(),
+        ) {
+            Ok(w) => w,
+            Err(e) => {
+                warn!("Failed to initialise filesystem watcher: {e}");
+                return;
+            }
+        };
 
-        // Maps canonical file path → source ID for files discovered at runtime.
-        // Starts empty; populated by New events, cleaned up by Deleted events.
-        let path_to_id: DashMap<PathBuf, String> = DashMap::new();
-
-        let (file_tx, mut file_rx) = tokio::sync::mpsc::channel::<FileChange>(256);
-        TileFileWatcher::start(watched_dirs, file_tx);
+        for dir in &watched_dirs {
+            if let Err(e) = watcher.watch(dir, notify::RecursiveMode::NonRecursive) {
+                warn!("Failed to watch {}: {e}", dir.display());
+            }
+        }
 
         tokio::spawn(async move {
-            while let Some(change) = file_rx.recv().await {
-                match change {
-                    FileChange::Deleted(canon) => {
-                        if let Some((_, id)) = path_to_id.remove(&canon) {
-                            info!(
-                                "Removing source `{id}` (file deleted: {})",
-                                canon.display()
-                            );
+            let _watcher = watcher;
+            while let Some(e) = fs_rx.recv().await {
+                for canon in e
+                    .paths
+                    .iter()
+                    .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
+                {
+                    if !canon.extension().is_some_and(|e| e == "pmtiles") {
+                        continue;
+                    }
+
+                    match e.kind {
+                        EventKind::Remove(_) => {
+                            let Some(name) = canon.file_stem().and_then(|s| s.to_str()) else {
+                                continue;
+                            };
+                            let id = idr.resolve(name, canon.display().to_string());
+                            info!("Removing source `{id}` (file deleted: {})", canon.display());
                             let advisory = ReloadAdvisory {
                                 removed: vec![id],
                                 ..Default::default()
@@ -74,28 +100,22 @@ impl PMTilesReloader {
                                 warn!("Advisory channel closed; dropping reload advisory");
                             }
                         }
-                    }
-                    FileChange::New(canon) => {
-                        if !canon.extension().is_some_and(|e| e == "pmtiles") {
-                            continue;
-                        }
-                        info!("Loading new source from {}", canon.display());
-                        let result = match Self::load_file(&idr, canon.clone()).await {
-                            Ok(a) => Some(a),
-                            Err(e) => {
-                                warn!("Failed to load {}: {e}", canon.display());
-                                None
-                            }
-                        };
-                        if let Some(advisory) = result {
-                            let added_ids = advisory.added_ids();
-                            if tx.send(advisory).await.is_err() {
-                                warn!("Advisory channel closed; dropping reload advisory");
-                            }
-                            if let Some(id) = added_ids.into_iter().next() {
-                                path_to_id.insert(canon, id);
+                        EventKind::Create(_) => {
+                            info!("Loading new source from {}", canon.display());
+                            let result = match Self::load_file(&idr, canon.clone()).await {
+                                Ok(a) => Some(a),
+                                Err(e) => {
+                                    warn!("Failed to load {}: {e}", canon.display());
+                                    None
+                                }
+                            };
+                            if let Some(advisory) = result {
+                                if tx.send(advisory).await.is_err() {
+                                    warn!("Advisory channel closed; dropping reload advisory");
+                                }
                             }
                         }
+                        _ => {}
                     }
                 }
             }
@@ -143,8 +163,8 @@ impl PMTilesReloader {
         let path = path
             .canonicalize()
             .map_err(|e| ConfigFileError::IoError(e, path.clone()))?;
-        let path = std::path::absolute(&path)
-            .map_err(|e| ConfigFileError::IoError(e, path.clone()))?;
+        let path =
+            std::path::absolute(&path).map_err(|e| ConfigFileError::IoError(e, path.clone()))?;
         let url = Url::from_file_path(&path)
             .or(Err(ConfigFileError::PathNotConvertibleToUrl(path.clone())))?;
 

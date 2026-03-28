@@ -14,15 +14,13 @@
 use std::env;
 use std::time::Duration;
 
-use martin::config::file::postgres::{
-    PostgresCfgPublish, PostgresConfig, POOL_SIZE_DEFAULT,
-};
-use martin::config::primitives::IdResolver;
-use martin::config::primitives::OptBoolObj;
-use martin::config::primitives::OptOneMany;
+use martin::config::file::postgres::{POOL_SIZE_DEFAULT, PostgresCfgPublish, PostgresConfig};
 use martin::config::file::reload::ReloadAdvisory;
 use martin::config::file::reload::TileSourceManager;
 use martin::config::file::reload::postgres::{PostgresPollSetup, PostgresPoller};
+use martin::config::primitives::IdResolver;
+use martin::config::primitives::OptBoolObj;
+use martin::config::primitives::OptOneMany;
 use martin::srv::RESERVED_KEYWORDS;
 use martin_core::tiles::NO_TILE_CACHE;
 use martin_core::tiles::postgres::PostgresPool;
@@ -89,7 +87,11 @@ async fn postgres_poller_discovers_new_table() {
     let pool = make_pool().await;
 
     // Ensure a clean slate.
-    exec(&pool, &format!("DROP SCHEMA IF EXISTS {WATCHER_SCHEMA} CASCADE;")).await;
+    exec(
+        &pool,
+        &format!("DROP SCHEMA IF EXISTS {WATCHER_SCHEMA} CASCADE;"),
+    )
+    .await;
     exec(&pool, &format!("CREATE SCHEMA {WATCHER_SCHEMA};")).await;
 
     let config = watcher_config();
@@ -99,12 +101,20 @@ async fn postgres_poller_discovers_new_table() {
 
     PostgresPoller::start(
         tx,
-        PostgresPollSetup { config, idr, interval: Duration::from_secs(1) },
+        PostgresPollSetup {
+            config,
+            idr,
+            interval: Duration::from_secs(1),
+        },
     );
 
     // Give the poller time to run its first (empty) cycle.
     sleep(POLL_WAIT).await;
-    assert_eq!(tsm.source_ids().len(), 0, "no sources before table is created");
+    assert_eq!(
+        tsm.source_ids().len(),
+        0,
+        "no sources before table is created"
+    );
 
     // Create a geometry table in the watched schema.
     exec(
@@ -126,7 +136,11 @@ async fn postgres_poller_discovers_new_table() {
     );
 
     // Cleanup.
-    exec(&pool, &format!("DROP SCHEMA IF EXISTS {WATCHER_SCHEMA} CASCADE;")).await;
+    exec(
+        &pool,
+        &format!("DROP SCHEMA IF EXISTS {WATCHER_SCHEMA} CASCADE;"),
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +151,11 @@ async fn postgres_poller_discovers_new_table() {
 async fn postgres_poller_removes_dropped_table() {
     let pool = make_pool().await;
 
-    exec(&pool, &format!("DROP SCHEMA IF EXISTS {WATCHER_SCHEMA} CASCADE;")).await;
+    exec(
+        &pool,
+        &format!("DROP SCHEMA IF EXISTS {WATCHER_SCHEMA} CASCADE;"),
+    )
+    .await;
     exec(&pool, &format!("CREATE SCHEMA {WATCHER_SCHEMA};")).await;
 
     // Create the table BEFORE the poller starts so it is present from the
@@ -158,7 +176,11 @@ async fn postgres_poller_removes_dropped_table() {
 
     PostgresPoller::start(
         tx,
-        PostgresPollSetup { config, idr, interval: Duration::from_secs(1) },
+        PostgresPollSetup {
+            config,
+            idr,
+            interval: Duration::from_secs(1),
+        },
     );
 
     // Wait for the poller to discover the initial table.
@@ -171,11 +193,7 @@ async fn postgres_poller_removes_dropped_table() {
     );
 
     // Drop the table and wait for the next poll.
-    exec(
-        &pool,
-        &format!("DROP TABLE {WATCHER_SCHEMA}.drop_me;"),
-    )
-    .await;
+    exec(&pool, &format!("DROP TABLE {WATCHER_SCHEMA}.drop_me;")).await;
     sleep(POLL_WAIT).await;
 
     let ids_after = tsm.source_ids();
@@ -185,5 +203,9 @@ async fn postgres_poller_removes_dropped_table() {
     );
 
     // Cleanup.
-    exec(&pool, &format!("DROP SCHEMA IF EXISTS {WATCHER_SCHEMA} CASCADE;")).await;
+    exec(
+        &pool,
+        &format!("DROP SCHEMA IF EXISTS {WATCHER_SCHEMA} CASCADE;"),
+    )
+    .await;
 }

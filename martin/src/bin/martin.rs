@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use clap::Parser as _;
 use martin::MartinResult;
 use martin::config::args::Args;
+#[cfg(feature = "_file_watcher")]
+use martin::config::file::reload::WatchPaths;
 use martin::config::file::{Config, read_config};
 use martin::config::primitives::env::OsEnv;
 use martin::logging::{ensure_martin_core_log_level_matches, init_tracing};
-#[cfg(feature = "_file_watcher")]
-use martin::config::file::reload::WatchPaths;
 use martin::srv::new_server;
 use tracing::{error, info};
 
@@ -119,7 +119,10 @@ fn extract_watch_paths(config: &Config) -> Option<WatchPaths> {
         return None;
     }
 
-    Some(WatchPaths { watched_dirs, ..Default::default() })
+    Some(WatchPaths {
+        watched_dirs,
+        ..Default::default()
+    })
 }
 
 #[tokio::main]

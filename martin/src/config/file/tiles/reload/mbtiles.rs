@@ -16,11 +16,8 @@ use crate::MartinResult;
 use crate::config::file::reload::{ReloadAdvisory, TileSourceManager};
 use crate::config::primitives::IdResolver;
 
-use notify::Event;
-use notify::EventKind;
-use notify::Watcher;
 use notify::event::AccessKind;
-use notify::{Config, RecommendedWatcher};
+use notify::{Config, Event, EventKind, RecommendedWatcher, Watcher};
 use tracing::{info, warn};
 
 /// Loads and reloads MBTiles tile sources.
@@ -91,7 +88,7 @@ impl MBTilesReloader {
                                 warn!("Advisory channel closed; dropping reload advisory");
                             }
                         }
-                        EventKind::Access(AccessKind::Close(..)) => {
+                        EventKind::Create(_) | EventKind::Access(AccessKind::Close(..)) => {
                             info!("Loading new source from {}", canon.display());
                             let result = match Self::load_file(&idr, canon.clone()).await {
                                 Ok(a) => Some(a),

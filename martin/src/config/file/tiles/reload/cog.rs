@@ -10,8 +10,8 @@
 use std::path::PathBuf;
 
 use martin_core::tiles::cog::CogSource;
-use notify::EventKind;
-use notify::{Config, Event, RecommendedWatcher, Watcher};
+use notify::event::AccessKind;
+use notify::{Config, Event, EventKind, RecommendedWatcher, Watcher};
 use tracing::{info, warn};
 
 use crate::MartinResult;
@@ -67,10 +67,9 @@ impl COGReloader {
                     .iter()
                     .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
                 {
-                    if !canon
-                        .extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case("tif") || e.eq_ignore_ascii_case("tiff"))
-                    {
+                    if !canon.extension().is_some_and(|e| {
+                        e.eq_ignore_ascii_case("tif") || e.eq_ignore_ascii_case("tiff")
+                    }) {
                         continue;
                     }
 
@@ -89,7 +88,7 @@ impl COGReloader {
                                 warn!("Advisory channel closed; dropping reload advisory");
                             }
                         }
-                        EventKind::Create(_) => {
+                        EventKind::Create(_) | EventKind::Access(AccessKind::Close(..)) => {
                             info!("Loading new source from {}", canon.display());
                             let result = match Self::load_file(&idr, canon.clone()).await {
                                 Ok(a) => Some(a),

@@ -6,3 +6,6 @@ pub mod mbtiles;
 pub mod pmtiles;
 #[cfg(feature = "postgres")]
 pub mod postgres;
+
+#[cfg(feature = "_file_watcher")]
+pub mod reload;

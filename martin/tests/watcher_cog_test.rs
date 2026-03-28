@@ -9,14 +9,11 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
+use martin::config::file::tiles::reload::cog::COGReloader;
 use martin::reload::ReloadAdvisory;
 use martin::reload::TileSourceManager;
-use martin::reload::WatchPaths;
-use martin::reload::cog::COGReloader;
-use martin::reload::watcher::TileFileWatcher;
 use martin_core::tiles::NO_TILE_CACHE;
 use tempfile::tempdir;
 use tokio::sync::mpsc;
@@ -55,16 +52,7 @@ async fn start_file_watcher(
     let idr = tsm.id_resolver();
     let mut id_to_path = HashMap::new();
     id_to_path.insert(id.to_string(), path.clone());
-    TileFileWatcher::start(
-        idr,
-        tx,
-        WatchPaths {
-            id_to_path,
-            watched_dirs: vec![],
-        },
-        vec![Arc::new(COGReloader)],
-    )
-    .await;
+    COGReloader::start(idr, tx, id_to_path, vec![]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,14 +137,11 @@ async fn cog_watcher_loads_new_file_in_watched_directory() {
     let tsm = TileSourceManager::new(NO_TILE_CACHE);
     let tx = make_advisory_tx(&tsm);
 
-    TileFileWatcher::start(
+    COGReloader::start(
         tsm.id_resolver(),
         tx,
-        WatchPaths {
-            id_to_path: HashMap::new(),
-            watched_dirs: vec![dir.path().to_path_buf()],
-        },
-        vec![Arc::new(COGReloader)],
+        HashMap::new(),
+        vec![dir.path().to_path_buf()],
     )
     .await;
     wait_for_watcher_init().await;

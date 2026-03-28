@@ -31,26 +31,25 @@ use tracing::debug;
 use crate::config::primitives::IdResolver;
 use crate::srv::RESERVED_KEYWORDS;
 
-#[cfg(feature = "mbtiles")]
-pub mod mbtiles;
-
-#[cfg(feature = "_file_watcher")]
-pub mod watcher;
-#[cfg(feature = "_file_watcher")]
-pub use watcher::WatchPaths;
-
-#[cfg(all(feature = "pmtiles", feature = "_file_watcher"))]
-pub mod pmtiles;
-
-#[cfg(all(feature = "unstable-cog", feature = "_file_watcher"))]
-pub mod cog;
-
 #[cfg(feature = "postgres")]
 pub mod postgres;
 #[cfg(feature = "postgres")]
 pub use postgres::{PostgresPollSetup, PostgresPoller};
 
-/// A declaration of one or more tile-source changes observed by a [`TileSourceWatcher`].
+/// Paths needed to start the per-format file watchers.
+///
+/// Built by `extract_watch_paths` in the server binary and passed to
+/// [`new_server`](crate::srv::new_server), which distributes the paths to
+/// each format-specific reloader.
+#[cfg(feature = "_file_watcher")]
+pub struct WatchPaths {
+    /// Existing sources: maps source ID → original file path.
+    pub id_to_path: std::collections::HashMap<String, std::path::PathBuf>,
+    /// Directories to watch for newly-created tile files.
+    pub watched_dirs: Vec<std::path::PathBuf>,
+}
+
+/// A declaration of one or more tile-source changes.
 ///
 /// Advisories are produced by watchers and consumed by the [`TileSourceManager`] via
 /// [`apply_advisory`](TileSourceManager::apply_advisory).  The TSM decides what
@@ -76,40 +75,6 @@ impl ReloadAdvisory {
     pub fn added_ids(&self) -> Vec<String> {
         self.added.iter().map(|s| s.get_id().to_string()).collect()
     }
-}
-
-/// Trait implemented by each tile-source watcher to plug into [`TileFileWatcher`](watcher::TileFileWatcher).
-///
-/// A watcher encapsulates format- or backend-specific knowledge (e.g. which
-/// file extension it handles, or how to query a Postgres database for changes)
-/// and produces [`ReloadAdvisory`] values that the generic watcher forwards to
-/// the advisory channel.
-#[cfg(feature = "_file_watcher")]
-#[async_trait::async_trait]
-pub trait TileSourceWatcher: Send + Sync {
-    /// Returns `true` if this watcher can handle the given file path.
-    fn can_handle(&self, path: &std::path::Path) -> bool;
-
-    /// Open the file at `path` and return a [`ReloadAdvisory`] with the new
-    /// source in [`ReloadAdvisory::added`].
-    ///
-    /// `idr` is used to resolve a stable, non-reserved ID for the new source.
-    async fn load_file(
-        &self,
-        idr: &IdResolver,
-        path: std::path::PathBuf,
-    ) -> crate::MartinResult<ReloadAdvisory>;
-
-    /// Re-open the file at `path` and return a [`ReloadAdvisory`] with the
-    /// refreshed source in [`ReloadAdvisory::changed`].
-    ///
-    /// The caller supplies the existing stable `id` so the same URL remains
-    /// valid after the reload.
-    async fn reload_source(
-        &self,
-        id: &str,
-        path: std::path::PathBuf,
-    ) -> crate::MartinResult<ReloadAdvisory>;
 }
 
 /// Central coordinator for live tile-source catalog updates.

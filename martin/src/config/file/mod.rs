@@ -16,6 +16,6 @@ mod resources;
 pub use resources::*;
 
 #[cfg(feature = "_tiles")]
-mod tiles;
+pub mod tiles;
 #[cfg(feature = "_tiles")]
 pub use tiles::*;

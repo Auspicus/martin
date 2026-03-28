@@ -200,23 +200,63 @@ pub fn new_server(
     #[cfg(feature = "_file_watcher")]
     if let Some(paths) = watch_paths {
         let idr = state.tsm.id_resolver();
-        let mut loaders: Vec<std::sync::Arc<dyn crate::reload::TileSourceWatcher>> = vec![];
+
         #[cfg(feature = "mbtiles")]
-        loaders.push(std::sync::Arc::new(
-            crate::reload::mbtiles::MBTilesReloader,
-        ));
+        {
+            let mbt_paths: std::collections::HashMap<String, std::path::PathBuf> = paths
+                .id_to_path
+                .iter()
+                .filter(|(_, p)| p.extension().is_some_and(|e| e == "mbtiles"))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            tokio::spawn(
+                crate::config::file::tiles::reload::mbtiles::MBTilesReloader::start(
+                    idr.clone(),
+                    advisory_tx.clone(),
+                    mbt_paths,
+                    paths.watched_dirs.clone(),
+                ),
+            );
+        }
+
         #[cfg(feature = "pmtiles")]
-        loaders.push(std::sync::Arc::new(
-            crate::reload::pmtiles::PMTilesReloader,
-        ));
+        {
+            let pmt_paths: std::collections::HashMap<String, std::path::PathBuf> = paths
+                .id_to_path
+                .iter()
+                .filter(|(_, p)| p.extension().is_some_and(|e| e == "pmtiles"))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            tokio::spawn(
+                crate::config::file::tiles::reload::pmtiles::PMTilesReloader::start(
+                    idr.clone(),
+                    advisory_tx.clone(),
+                    pmt_paths,
+                    paths.watched_dirs.clone(),
+                ),
+            );
+        }
+
         #[cfg(feature = "unstable-cog")]
-        loaders.push(std::sync::Arc::new(crate::reload::cog::COGReloader));
-        tokio::spawn(crate::reload::watcher::TileFileWatcher::start(
-            idr,
-            advisory_tx.clone(),
-            paths,
-            loaders,
-        ));
+        {
+            let cog_paths: std::collections::HashMap<String, std::path::PathBuf> = paths
+                .id_to_path
+                .iter()
+                .filter(|(_, p)| {
+                    p.extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("tif") || e.eq_ignore_ascii_case("tiff"))
+                })
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            tokio::spawn(
+                crate::config::file::tiles::reload::cog::COGReloader::start(
+                    idr.clone(),
+                    advisory_tx.clone(),
+                    cog_paths,
+                    paths.watched_dirs.clone(),
+                ),
+            );
+        }
     }
 
     // Start Postgres pollers (moved here from Config::resolve so the advisory

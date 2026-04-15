@@ -6,8 +6,12 @@ use martin::config::args::Args;
 #[cfg(all(feature = "webui", not(docsrs)))]
 use martin::config::args::WebUiMode;
 use martin::config::file::{Config, read_config};
+#[cfg(feature = "_tiles")]
+use martin::config::primitives::IdResolver;
 use martin::config::primitives::env::OsEnv;
 use martin::logging::{ensure_martin_core_log_level_matches, init_tracing};
+#[cfg(feature = "_tiles")]
+use martin::srv::RESERVED_KEYWORDS;
 use martin::srv::new_server;
 use tracing::{error, info};
 
@@ -33,8 +37,71 @@ async fn start(args: Args) -> MartinResult<()> {
         &env,
     )?;
     config.finalize()?;
+
+    #[cfg(feature = "_tiles")]
+    let resolver = IdResolver::new(RESERVED_KEYWORDS);
+
     #[cfg(feature = "_catalog")]
-    let sources = config.resolve().await?;
+    let sources = config.resolve(&resolver).await?;
+    let mgr = sources.tile_manager.clone();
+
+    #[cfg(feature = "mbtiles")]
+    {
+        use martin::config::file::{FileConfigEnum, reload::mbtiles::MBTilesReloader};
+        use std::time::UNIX_EPOCH;
+        use std::{collections::BTreeMap, path::PathBuf};
+        use tracing::warn;
+
+        let mut watch_paths: Vec<PathBuf> = vec![];
+        match &config.mbtiles {
+            FileConfigEnum::Config(c) => {
+                watch_paths.extend(c.paths.clone());
+            }
+            FileConfigEnum::Path(p) => {
+                watch_paths.push(p.clone());
+            }
+            FileConfigEnum::Paths(ps) => {
+                watch_paths.extend(ps.clone());
+            }
+            _ => {}
+        }
+
+        let init: BTreeMap<String, (PathBuf, u64)> = match &config.mbtiles {
+            FileConfigEnum::Config(cfg) => {
+                let mut m = BTreeMap::new();
+                if let Some(s) = &cfg.sources {
+                    for (id, src) in s {
+                        let path = src.get_path();
+                        let Ok(metadata) = path.metadata() else {
+                            continue;
+                        };
+                        let Ok(modified) = metadata.modified() else {
+                            continue;
+                        };
+                        let Ok(unix_epoch_delta) = modified.duration_since(UNIX_EPOCH) else {
+                            continue;
+                        };
+
+                        m.insert(
+                            id.clone(),
+                            (path.clone(), unix_epoch_delta.as_millis() as u64),
+                        );
+                    }
+                }
+                m
+            }
+            _ => BTreeMap::new(),
+        };
+
+        if !watch_paths.is_empty() {
+            let reloader = MBTilesReloader::new(resolver, init);
+            if let Err(e) =
+                reloader.watch(mgr, watch_paths.clone().into_iter().to_owned().collect())
+            {
+                warn!("failed to start MBTilesReloader {e:?}")
+            }
+        }
+    }
 
     if let Some(file_name) = save_config {
         config.save_to_file(file_name.as_path())?;
